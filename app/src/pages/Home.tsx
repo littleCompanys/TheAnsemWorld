@@ -19,22 +19,26 @@ const PREVIEW_PIECE_COUNT = 12;
 
 export default function Home() {
   const { ansem: ansemPrice } = usePrices();
-  const { stats, loading } = useProtocol();
+  // The only page that shows the collection-wide counters, so the only
+  // one that pays for the scan of every Position that produces them.
+  const { stats, loading } = useProtocol(0, true);
   const toast = useToast();
   const cfg = stats?.config ?? null;
   const roundLeft = useRoundCountdown(stats?.totalAllocated ?? null);
 
+  // These four come from the position scan, which this page asks for
+  // above. They read null anywhere the scan was skipped, so the reads
+  // are guarded rather than defaulted - a silent zero here would draw
+  // an empty collection and look like a real answer.
   const supply = stats?.positionCount ?? 0;
   const burned = stats?.nftsBurned ?? 0;
+  const active = stats?.activeCount ?? 0;
   const everMinted = supply + burned;
   const burnedPct = everMinted > 0 ? (burned / everMinted) * 100 : 0;
-  const activatedPct =
-    stats && stats.positionCount > 0
-      ? (stats.activeCount / stats.positionCount) * 100
-      : 0;
+  const activatedPct = supply > 0 ? (active / supply) * 100 : 0;
   const weightShare =
-    stats && stats.positionCount > 0 && stats.totalWeight > 0
-      ? Math.min(100, (stats.activeCount / stats.positionCount) * 100)
+    supply > 0 && (stats?.totalWeight ?? 0) > 0
+      ? Math.min(100, (active / supply) * 100)
       : 0;
 
   const ansemMint = cfg?.ansemMint?.toBase58() ?? null;
@@ -94,7 +98,7 @@ export default function Home() {
                 $ANSEMW burned{" "}
                 <b className="mono">
                   {stats
-                    ? stats.totalAnsemwBurned.toLocaleString("en-US")
+                    ? (stats.totalAnsemwBurned ?? 0).toLocaleString("en-US")
                     : "—"}
                 </b>
               </div>
@@ -313,7 +317,7 @@ export default function Home() {
                   <div className="label mono">$ANSEMW BURNED</div>
                   <div className="val">
                     {stats
-                      ? stats.totalAnsemwBurned.toLocaleString("en-US")
+                      ? (stats.totalAnsemwBurned ?? 0).toLocaleString("en-US")
                       : "—"}
                   </div>
                 </div>

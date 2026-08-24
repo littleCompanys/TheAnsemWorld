@@ -7,13 +7,13 @@ resolution = true
 skip-lint = false
 
 [programs.mainnet]
-ansem_world_v4 = "EkdJTwzMJGjPovsrwpMSeHzRcDQ98JXUvs6AwPLjwg8t"
+ansem_world_v4 = "8877byAeJpCUWQhBWXQ5YrBPSrBa9761koygiFP1ijtP"
 
 [programs.devnet]
-ansem_world_v4 = "EkdJTwzMJGjPovsrwpMSeHzRcDQ98JXUvs6AwPLjwg8t"
+ansem_world_v4 = "8877byAeJpCUWQhBWXQ5YrBPSrBa9761koygiFP1ijtP"
 
 [programs.localnet]
-ansem_world_v4 = "EkdJTwzMJGjPovsrwpMSeHzRcDQ98JXUvs6AwPLjwg8t"
+ansem_world_v4 = "8877byAeJpCUWQhBWXQ5YrBPSrBa9761koygiFP1ijtP"
 
 [registry]
 url = "https://api.apr.dev"

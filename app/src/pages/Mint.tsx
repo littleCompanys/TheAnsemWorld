@@ -15,53 +15,36 @@ import { useRequireWallet } from "../lib/useRequireWallet";
 import { confirmSignature } from "../lib/confirmSignature";
 
 // Every mint_nft call handles exactly one piece - there is no on-chain
-// batch-mint instruction - so a bigger quantity means more transactions,
-// which means more sequential wallet approvals (see MINT_CHUNK_SIZE
-// below). Past ~25 the approval rounds start taking long enough that a
-// blockhash from an early round can expire before a later round sends,
-// surfacing as "Signature has expired: block height exceeded" - a
-// confirmed failure mode, not a hypothetical one. 25 keeps the whole
-// flow to a handful of approvals.
+// batch-mint instruction - and every piece needs its own wallet
+// approval, because batching the signatures is what Phantom blocks (see
+// the signing section below). So quantity N means N prompts, and 25 is
+// already a lot of clicking.
+//
+// It cannot go much higher regardless: past ~25 the approval rounds take
+// long enough that a blockhash from an early round can expire before a
+// later round sends, surfacing as "Signature has expired: block height
+// exceeded" - a confirmed failure mode, not a hypothetical one.
 const MAX_MINT_QTY = 25;
-/** Stay under Solana's 1232-byte packet limit (signatures inflate the wire size). */
-const TX_SIZE_LIMIT = 1000;
-/**
- * Batches per wallet approval. A big mint can split into dozens of
- * batches (each capped at TX_SIZE_LIMIT); asking a wallet to sign all of
- * them in one `signAllTransactions` call is what actually produced the
- * "too long" error users hit past a handful of pieces - it's not a
- * single transaction's size, it's the size of the request handed to the
- * wallet extension itself. Chunking keeps each approval small and lets
- * a fresh blockhash back every chunk, so a slow approval on chunk 3
- * can't expire the blockhash chunk 8 was built with.
- */
-const MINT_CHUNK_SIZE = 4;
 
-// Transaction.serialize() isn't a pure size probe: it throws
-// ("Transaction too large: X > 1232") the moment the wire size crosses
-// Solana's hard packet limit, instead of just returning a length. With
-// TX_SIZE_LIMIT sitting only ~230 bytes below that hard cap and one more
-// mint_nft instruction costing ~300 bytes, a trial that's already at the
-// soft limit can jump straight past the hard one on the very next piece -
-// so the probe crashes before the packing loop below ever gets to compare
-// against TX_SIZE_LIMIT and split. Treating a thrown probe as "over the
-// limit" (Infinity) instead of letting it escape turns that crash into a
-// normal split.
-function approxTxSize(tx: Transaction): number {
-  try {
-    return tx.serialize({
-      requireAllSignatures: false,
-      verifySignatures: false,
-    }).length;
-  } catch {
-    return Infinity;
-  }
-}
+/**
+ * Compute budget, measured rather than guessed.
+ *
+ * Simulated against mainnet: one mint consumes 35,662 units and two
+ * consume 74,024, so the marginal cost of a piece is ~38k and the fixed
+ * overhead is small. These leave roughly 40-60% headroom on top, which
+ * covers the Core CPI growing a little without going back to asking for
+ * the ceiling.
+ *
+ * Re-measure with `simulateTransaction` if mint_nft ever does more work;
+ * a limit set too low fails the whole transaction, not just the excess.
+ */
+const CU_BASE = 15_000;
+const CU_PER_MINT = 45_000;
 
 const COLLECTION_NAME = "The Ansem World";
 
 export default function Mint() {
-  const { publicKey, signAllTransactions, signTransaction } = useWallet();
+  const { publicKey, signTransaction } = useWallet();
   const provider = useProvider();
   const toast = useToast();
   const requireWallet = useRequireWallet();
@@ -152,121 +135,178 @@ export default function Mint() {
         pieces.push({ ix, asset, address: asset.publicKey.toBase58(), name });
       }
 
-      // Pack mints into as few txs as fit under the 1232-byte limit. Sizing
-      // doesn't depend on the blockhash's actual value (it's always a
-      // fixed-length 32 bytes), so one placeholder is enough for the whole
-      // packing pass - the real blockhash for each group is fetched fresh
-      // right before it's sent, below.
-      const { blockhash: sizingBlockhash } =
-        await connection.getLatestBlockhash("confirmed");
-
-      const newGroup = () => ({
-        // Both compute-budget instructions up front, always. Wallets
-        // (Phantom included) auto-inject a priority-fee instruction into
-        // any transaction that doesn't already carry one, particularly
-        // when the network is congested - bytes our own size estimate
-        // below never saw, which is how a batch that measured under
-        // TX_SIZE_LIMIT still failed as "Transaction too large" once the
-        // wallet finished with it. Supplying our own here means the
-        // wallet has nothing left to add, and the bytes are the ones
-        // this function is already counting.
+      // One piece per transaction.
+      //
+      // These used to be packed several to a transaction, up to the byte
+      // limit, which is cheaper in fees and was fine on-chain. But the
+      // mint is the only action in this app that carries signers beyond
+      // the user's wallet - Metaplex Core uses an asset account's own
+      // address as the NFT's permanent address, so a fresh keypair has
+      // to sign each piece's creation - and it is also the only action
+      // Phantom blocks with "dApp may be malicious". Every other
+      // instruction here signs with the wallet alone and passes.
+      //
+      // Packing three pieces meant handing the wallet a transaction
+      // pre-signed by three keys it had never seen. One piece per
+      // transaction is the fewest such signatures the mint can have: the
+      // wallet, plus the one account being created.
+      //
+      // Approvals are still batched below, so the user does not sign
+      // once per piece.
+      let failedCount = 0;
+      let lastValid = 0;
+      const groups = pieces.map((piece) => ({
         instructions: [
-          ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+          ComputeBudgetProgram.setComputeUnitLimit({
+            units: CU_BASE + CU_PER_MINT,
+          }),
           ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+          piece.ix,
         ] as TransactionInstruction[],
-        assets: [] as Keypair[],
-      });
+        assets: [piece.asset],
+        piece,
+      }));
 
-      const groups: { instructions: TransactionInstruction[]; assets: Keypair[] }[] = [];
-      let group = newGroup();
+      // One piece at a time: fresh blockhash, approve, send.
+      //
+      // The batch approval is gone (see below), so approvals are now
+      // sequential and a person clicking through twenty of them takes
+      // minutes. Building a whole chunk on one blockhash and sending
+      // after every approval meant the last transaction carried a
+      // blockhash minutes old - past the ~60-90s a blockhash lives - and
+      // it came back as "Transaction simulation failed. Logs: []", which
+      // reads like a program error and is nothing of the kind. An empty
+      // log array means the transaction never reached execution at all.
+      //
+      // Fetching per piece keeps the gap to one approval: blockhash,
+      // prompt, send. Confirmations are collected and awaited together
+      // at the end, so nobody waits on chain finality between prompts.
+      // Paired with their piece, so the report can name exactly what
+      // landed rather than assuming every piece asked for was minted.
+      const sent: { sig: string; piece: MintPiece }[] = [];
+      let cancelled = 0;
 
-      for (const piece of pieces) {
-        const trial = new Transaction();
-        trial.feePayer = publicKey;
-        trial.recentBlockhash = sizingBlockhash;
-        for (const existing of group.instructions) trial.add(existing);
-        trial.add(piece.ix);
-
-        const wouldOverflow =
-          approxTxSize(trial) > TX_SIZE_LIMIT && group.instructions.length > 1;
-
-        if (wouldOverflow) {
-          groups.push(group);
-          group = newGroup();
-        }
-        group.instructions.push(piece.ix);
-        group.assets.push(piece.asset);
-      }
-      if (group.assets.length > 0) groups.push(group);
-
-      // One wallet approval per chunk of groups, not one approval for
-      // everything - a signAllTransactions call carrying dozens of
-      // transactions is what actually produced "too long" past a handful
-      // of pieces. Each chunk gets its own fresh blockhash, so a slow
-      // approval on an earlier chunk can't expire a later one's.
-      for (let start = 0; start < groups.length; start += MINT_CHUNK_SIZE) {
-        const chunk = groups.slice(start, start + MINT_CHUNK_SIZE);
+      for (const g of groups) {
         const { blockhash, lastValidBlockHeight } =
           await connection.getLatestBlockhash("confirmed");
 
-        const txs = chunk.map((g) => {
-          const tx = new Transaction();
-          tx.feePayer = publicKey;
-          tx.recentBlockhash = blockhash;
-          for (const ix of g.instructions) tx.add(ix);
-          tx.partialSign(...g.assets);
-          return tx;
-        });
+        const tx = new Transaction();
+        tx.feePayer = publicKey;
+        tx.recentBlockhash = blockhash;
+        for (const ix of g.instructions) tx.add(ix);
 
-        const sendAndConfirmAll = async (signedTxs: Transaction[]) => {
-          for (const stx of signedTxs) {
-            const sig = await connection.sendRawTransaction(stx.serialize(), {
-              skipPreflight: false,
-              preflightCommitment: "confirmed",
-            });
-            // Not connection.confirmTransaction(): every strategy it offers
-            // races an onSignature WebSocket subscription, which never
-            // connects on this app's HTTP-only RPC proxy - so the REST
-            // fallback inside that same race never runs either, and only
-            // the independent blockheight clock is left ticking. That
-            // reports "expired" ~60-90s later even when the mint actually
-            // landed in seconds, which is exactly the false failure users
-            // hit. confirmSignature() polls signature status directly.
-            await confirmSignature(connection, sig, lastValidBlockHeight);
-          }
-        };
+        // The asset keypairs sign AFTER the wallet, never before.
+        //
+        // Both orders produce the same valid transaction - signature
+        // slots are fixed by the message header, so when each is filled
+        // changes nothing about the bytes that reach the chain. What
+        // changes is what the wallet is handed. Signing the assets first
+        // meant Phantom received a transaction already carrying a
+        // signature from a key it had never seen, and it blocked the
+        // request as "dApp may be malicious". Signing them after hands
+        // the wallet a clean transaction and adds the account-creation
+        // signature to what it gives back. Measured on mainnet: that
+        // single change cleared the block.
+        //
+        // The other half of the same finding: `signAllTransactions` is
+        // not used at all. One piece was accepted through
+        // `signTransaction` while any quantity above one went through
+        // the batch call and was blocked, with identical per-transaction
+        // contents. "Sign these seven at once" is how a drainer sweeps
+        // an account, and no amount of simplifying each transaction
+        // changes what the batch request looks like. So seven pieces is
+        // seven prompts - worse to click through than one, and far
+        // better than a block that stops the mint outright.
+        let signed: Transaction;
+        try {
+          signed = signTransaction
+            ? await signTransaction(tx)
+            : await provider.wallet.signTransaction(tx);
+        } catch (err) {
+          // Declining a prompt throws, and letting that escape the loop
+          // was skipping everything after it - the confirmations, the
+          // count, the list of what was minted. Pieces that had already
+          // been paid for and created went unreported, which is the one
+          // failure mode worse than failing outright.
+          //
+          // Stop prompting: someone who just clicked Cancel does not
+          // want the next nine popups. Whatever already went out is
+          // still confirmed and reported below.
+          cancelled = count - sent.length;
+          break;
+        }
+        signed.partialSign(...g.assets);
 
-        if (signAllTransactions && txs.length > 1) {
-          await sendAndConfirmAll(await signAllTransactions(txs));
-        } else if (signTransaction) {
-          const signed: Transaction[] = [];
-          for (const tx of txs) signed.push(await signTransaction(tx));
-          await sendAndConfirmAll(signed);
-        } else {
-          // Not provider.sendAndConfirm(): same WebSocket-race problem as
-          // everywhere else in this file, but worse here - with no
-          // blockhash passed, it falls back to confirmTransaction's
-          // legacy signature-only strategy, which has no independent
-          // expiry escape at all and just hangs on the broken subscription.
-          for (const tx of txs) {
-            const signed = await provider.wallet.signTransaction(tx);
-            const sig = await connection.sendRawTransaction(signed.serialize(), {
-              skipPreflight: false,
-              preflightCommitment: "confirmed",
-            });
-            await confirmSignature(connection, sig, lastValidBlockHeight);
+        try {
+          const sig = await connection.sendRawTransaction(signed.serialize(), {
+            skipPreflight: false,
+            preflightCommitment: "confirmed",
+          });
+          sent.push({ sig, piece: g.piece });
+          lastValid = Math.max(lastValid, lastValidBlockHeight);
+        } catch (err: any) {
+          // A preflight rejection arrives as SendTransactionError with
+          // the interesting part behind getLogs(); without it the
+          // message is the useless "Logs: []" that sent us looking in
+          // the wrong place. An empty log array means the transaction
+          // never reached execution - a signature or blockhash problem,
+          // not a program one - so dump the shape alongside.
+          let logs: string[] | null = null;
+          try {
+            logs = (await err?.getLogs?.(connection)) ?? null;
+          } catch {
+            /* getLogs can itself fail; the dump still helps */
           }
+          console.error("[mint] preflight rejected", {
+            message: String(err?.message ?? err),
+            logs,
+            signatures: signed.signatures.map((x) => ({
+              key: x.publicKey.toBase58(),
+              signed: x.signature !== null,
+            })),
+            feePayer: signed.feePayer?.toBase58(),
+            blockhash: signed.recentBlockhash,
+          });
+          failedCount += 1;
         }
       }
 
-      const minted = pieces.map((p) => p.address);
-      const mintedNames = pieces.map((p) => p.name);
-      setLastMinted(minted);
-      setLastMintedNames(mintedNames);
+      // Confirm what went out, together. Anything that fails to confirm
+      // was still charged for and may yet land, so it is reported as
+      // unconfirmed rather than as a failure.
+      const settled = await Promise.allSettled(
+        sent.map((x) => confirmSignature(connection, x.sig, lastValid))
+      );
+      const landed = sent.filter((_, i) => settled[i].status === "fulfilled");
+      const unconfirmed = sent.length - landed.length;
+
+      // Show exactly the pieces that exist, not the pieces that were
+      // asked for. Someone who cancelled halfway still owns what they
+      // approved, and the wallet balance will tell them so whether the
+      // page does or not.
+      setLastMinted(landed.map((x) => x.piece.address));
+      setLastMintedNames(landed.map((x) => x.piece.name));
+
+      if (landed.length === 0) {
+        throw new Error(
+          cancelled > 0
+            ? "Cancelled — no pieces were minted."
+            : "No pieces were minted. Check the console for the reason."
+        );
+      }
+
+      const parts: string[] = [];
+      if (cancelled > 0) parts.push(`${cancelled} cancelled`);
+      if (failedCount > 0) parts.push(`${failedCount} failed`);
+      if (unconfirmed > 0) parts.push(`${unconfirmed} still confirming`);
+
       toast(
-        count === 1
-          ? `Minted! ${mintedNames[0]}`
-          : `Minted ${count} pieces`
+        parts.length > 0
+          ? `Minted ${landed.length} of ${count} — ${parts.join(", ")}`
+          : count === 1
+            ? `Minted! ${landed[0].piece.name}`
+            : `Minted ${landed.length} pieces`,
+        failedCount > 0
       );
       reroll();
       bump();
@@ -369,6 +409,18 @@ export default function Mint() {
                     <span className="k">TOTAL</span>
                     <span className="v green">{totalPriceInSol} SOL</span>
                   </div>
+                  {/* Each piece is signed on its own - batching the
+                      signatures is what wallets block - so the prompt
+                      count is worth saying before someone starts
+                      clicking, not after. */}
+                  {qty > 1 && (
+                    <div className="kv-row">
+                      <span className="k">APPROVALS</span>
+                      <span className="v mono" style={{ fontSize: 12 }}>
+                        {qty} — one per piece
+                      </span>
+                    </div>
+                  )}
                   <div className="kv-row">
                     <span className="k">SUPPLY</span>
                     <span className="v mono" style={{ fontSize: 12 }}>

@@ -35,16 +35,25 @@ export const useProvider = () => {
   }, [connection, wallet]);
 };
 
-/** Read-only program handle; works without a connected wallet. */
+/**
+ * Read-only program handle.
+ *
+ * Deliberately built on a dummy wallet even when a real one is
+ * connected, so its identity depends on the connection alone. Reads do
+ * not care who is asking, and memoising on the wallet made every hook
+ * keyed to this handle re-run each time the adapter changed state while
+ * connecting - useProtocol was measured running four times on a single
+ * page load, at roughly six RPC calls each.
+ *
+ * Writes never come through here; they build their own provider via
+ * useProvider(), which does require a real wallet.
+ */
 export const useProgram = (): AnsemProgram | null => {
   const { connection } = useConnection();
-  const wallet = useAnchorWallet();
   return useMemo(() => {
     const provider = new AnchorProvider(
       connection,
-      // A dummy wallet is enough for reads. Writes go through
-      // useProvider(), which requires a real one.
-      wallet ?? ({ publicKey: PublicKey.default } as any),
+      { publicKey: PublicKey.default } as any,
       { commitment: "processed", preflightCommitment: "processed" }
     );
     try {
@@ -52,7 +61,7 @@ export const useProgram = (): AnsemProgram | null => {
     } catch {
       return null;
     }
-  }, [connection, wallet]);
+  }, [connection]);
 };
 
 export type ProtocolStats = {
@@ -62,12 +71,13 @@ export type ProtocolStats = {
   totalAllocated: number;
   totalClaimed: number;
   vaultBalance: number;
-  positionCount: number;
-  activeCount: number;
+  /** Null unless the caller asked for the position scan - see below. */
+  positionCount: number | null;
+  activeCount: number | null;
   /** Sum of cumulative $ANSEMW burned across every position. */
-  totalAnsemwBurned: number;
+  totalAnsemwBurned: number | null;
   /** NFTs destroyed by fuse (= sum of absorbed_count). */
-  nftsBurned: number;
+  nftsBurned: number | null;
   /**
    * Which token program owns each mint. Read from the mint accounts
    * rather than assumed: $ANSEM on mainnet is Token-2022, and the two
@@ -80,7 +90,21 @@ export type ProtocolStats = {
   initialized: boolean;
 };
 
-export const useProtocol = (refreshKey = 0) => {
+/**
+ * Protocol-wide state.
+ *
+ * `withPositions` gates a scan of every Position account, which is the
+ * only expensive call here and the only source of the four collection
+ * counters. Seven of the nine pages using this hook need none of them -
+ * they want the config and the token programs - and were downloading
+ * the whole collection to ignore it. Harmless at seven pieces, roughly
+ * 830KB per page load at 3,333, on every visit.
+ *
+ * The counters read null when the scan was skipped, rather than zero:
+ * a page that starts needing them should fail visibly instead of
+ * quietly rendering an empty collection.
+ */
+export const useProtocol = (refreshKey = 0, withPositions = false) => {
   const program = useProgram();
   const { connection } = useConnection();
   const [stats, setStats] = useState<ProtocolStats | null>(null);
@@ -100,6 +124,10 @@ export const useProtocol = (refreshKey = 0) => {
     const load = async (): Promise<void> => {
       if (!program) return;
       setLoading(true);
+      // Timed for the same reason rpcSafe times writes: a slow page is
+      // only fixable once you know which phase is slow, and none of this
+      // is measurable from outside the browser.
+      const t0 = performance.now();
       try {
         const [cfgRaw, rsRaw] = await Promise.all([
           program.account.globalConfig.fetchNullable(configPda()),
@@ -116,10 +144,10 @@ export const useProtocol = (refreshKey = 0) => {
               totalAllocated: 0,
               totalClaimed: 0,
               vaultBalance: 0,
-              positionCount: 0,
-              activeCount: 0,
-              totalAnsemwBurned: 0,
-              nftsBurned: 0,
+              positionCount: null,
+              activeCount: null,
+              totalAnsemwBurned: null,
+              nftsBurned: null,
               ansemTokenProgram: TOKEN_PROGRAM_ID,
               ansemwTokenProgram: TOKEN_PROGRAM_ID,
               initialized: false,
@@ -141,28 +169,29 @@ export const useProtocol = (refreshKey = 0) => {
         const ansemTokenProgram = ansemMintAcct?.owner ?? TOKEN_PROGRAM_ID;
         const ansemwTokenProgram = ansemwMintAcct?.owner ?? TOKEN_PROGRAM_ID;
 
-        const positions = await program.account.position.all();
-        let vaultBalance = 0;
-        try {
-          const v = await getAccount(
-            connection,
-            rewardVaultPda(),
-            undefined,
-            ansemTokenProgram
-          );
-          vaultBalance = Number(v.amount);
-        } catch {
-          /* vault may not exist yet */
-        }
+        // The collection scan, and the vault balance, in parallel -
+        // neither depends on the other, and the scan is by far the
+        // slower of the two once the collection fills up.
+        const [positions, vaultBalance] = await Promise.all([
+          withPositions ? program.account.position.all() : null,
+          getAccount(connection, rewardVaultPda(), undefined, ansemTokenProgram)
+            .then((v) => Number(v.amount))
+            .catch(() => 0), // vault may not exist yet
+        ]);
 
-        let totalAnsemwBurned = 0;
-        let nftsBurned = 0;
-        let activeCount = 0;
-        for (const p of positions) {
-          const raw = p.account as any;
-          totalAnsemwBurned += Number(raw.cumulativeAnsemwBurned ?? 0);
-          nftsBurned += Number(raw.absorbedCount ?? 0);
-          if (raw.active) activeCount += 1;
+        let totalAnsemwBurned: number | null = null;
+        let nftsBurned: number | null = null;
+        let activeCount: number | null = null;
+        if (positions) {
+          totalAnsemwBurned = 0;
+          nftsBurned = 0;
+          activeCount = 0;
+          for (const p of positions) {
+            const raw = p.account as any;
+            totalAnsemwBurned += Number(raw.cumulativeAnsemwBurned ?? 0);
+            nftsBurned += Number(raw.absorbedCount ?? 0);
+            if (raw.active) activeCount += 1;
+          }
         }
 
         if (cancelled) return;
@@ -174,7 +203,7 @@ export const useProtocol = (refreshKey = 0) => {
           totalAllocated: (rsRaw as any).totalAllocated.toNumber(),
           totalClaimed: (rsRaw as any).totalClaimed.toNumber(),
           vaultBalance,
-          positionCount: positions.length,
+          positionCount: positions ? positions.length : null,
           activeCount,
           totalAnsemwBurned,
           nftsBurned,
@@ -200,6 +229,10 @@ export const useProtocol = (refreshKey = 0) => {
         }
       } finally {
         if (!cancelled) setLoading(false);
+        console.log(
+          `[read:useProtocol] ${Math.round(performance.now() - t0)}ms` +
+            `${withPositions ? " (+position scan)" : ""}`
+        );
       }
     };
 
@@ -207,7 +240,7 @@ export const useProtocol = (refreshKey = 0) => {
     return () => {
       cancelled = true;
     };
-  }, [program, connection, refreshKey]);
+  }, [program, connection, refreshKey, withPositions]);
 
   return { stats, loading, fetchError };
 };
@@ -221,16 +254,90 @@ export type OwnedNft = {
 };
 
 /**
+ * Ask the RPC's DAS index which assets a wallet holds.
+ *
+ * The obvious approach - getProgramAccounts on the Core program with
+ * memcmp filters on owner and collection - is what this used to do, and
+ * it is fine on devnet and fatal on mainnet. The filters are applied
+ * while scanning, not before it, so the RPC walks every Core asset in
+ * existence: a few thousand on devnet, millions on mainnet. Measured on
+ * mainnet it ran 25 seconds and then died on the proxy's gateway
+ * timeout, which is what made the Claim page hang.
+ *
+ * DAS answers the same question from an index in about 0.3s. Returns
+ * null when the RPC does not serve it, so the caller can fall back.
+ */
+const dasOwnedAssets = async (
+  endpoint: string,
+  owner: PublicKey,
+  collection: PublicKey
+): Promise<{ id: string; name: string; uri: string }[] | null> => {
+  const out: { id: string; name: string; uri: string }[] = [];
+  const limit = 1000;
+
+  for (let page = 1; ; page++) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAssetsByOwner",
+        params: { ownerAddress: owner.toBase58(), page, limit },
+      }),
+    });
+    // Two very different reasons this can fail, and only one of them
+    // should reach for the fallback.
+    //
+    // "Method not found" means the RPC has no DAS index - a plain
+    // validator - and the fallback is the only way to answer at all.
+    //
+    // A 429 or a 5xx means the RPC is overloaded, and falling back would
+    // answer overload by sending a *heavier* query. On launch day, with
+    // everyone loading at once, that turns a slow page into a slower one
+    // and pushes the RPC further under. Fail fast and let the page say
+    // so; a visible error beats a self-inflicted stampede.
+    if (!res.ok) {
+      throw new Error(`DAS request failed: HTTP ${res.status}`);
+    }
+    const json = await res.json();
+    if (json.error) {
+      const code = json.error?.code;
+      const msg = String(json.error?.message ?? "");
+      const unsupported =
+        code === -32601 || /method not found|unsupported/i.test(msg);
+      if (unsupported) return null;
+      throw new Error(`DAS error: ${msg || code}`);
+    }
+
+    const items: any[] = json.result?.items ?? [];
+    for (const it of items) {
+      const inCollection = (it.grouping ?? []).some(
+        (g: any) =>
+          g.group_key === "collection" &&
+          g.group_value === collection.toBase58()
+      );
+      if (!inCollection) continue;
+      out.push({
+        id: it.id,
+        name: it.content?.metadata?.name ?? "Ansem",
+        uri: it.content?.json_uri ?? "",
+      });
+    }
+    // A short page is the last page. Paginating matters for a wallet
+    // holding more than `limit` NFTs of any kind, not just ours - the
+    // collection filter runs after the index has already paged.
+    if (items.length < limit) break;
+  }
+  return out;
+};
+
+/**
  * The NFTs this wallet holds from our collection.
  *
- * Queried straight from Metaplex Core account data rather than an
- * indexing service. A Core asset lays out as:
- *   [0]      key discriminator
- *   [1..33]  owner
- *   [33]     update authority variant (2 = Collection)
- *   [34..66] the collection address
- * so three memcmp filters isolate exactly our collection's assets
- * for one owner. No API key, no third-party dependency.
+ * DAS first, and the Core account scan only if the RPC has no index.
+ * The scan still works against a local validator, where Core holds
+ * almost nothing and walking it costs nothing.
  */
 export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
   const { connection } = useConnection();
@@ -242,19 +349,62 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
   const load = useCallback(async () => {
     if (!publicKey || !collection || !program) {
       setNfts([]);
+      // Clearing the flag matters: without it a run that starts with a
+      // wallet and then re-runs without one (adapter reconnecting, route
+      // change) leaves the spinner up forever, with no request in flight
+      // to ever turn it off.
+      setLoading(false);
       return;
     }
     setLoading(true);
+    const t0 = performance.now();
+    let tFind = 0;
+    let via = "das";
     try {
-      const accounts = await connection.getProgramAccounts(MPL_CORE_PROGRAM_ID, {
-        filters: [
-          { memcmp: { offset: 1, bytes: publicKey.toBase58() } },
-          { memcmp: { offset: 33, bytes: "3" } }, // base58 of [2] = Collection
-          { memcmp: { offset: 34, bytes: collection.toBase58() } },
-        ],
-      });
+      let found = await dasOwnedAssets(
+        connection.rpcEndpoint,
+        publicKey,
+        collection
+      );
 
-      const assets = accounts.map((a) => a.pubkey);
+      if (found === null) {
+        via = "scan";
+        // No DAS on this RPC. Scan *our* program instead of Core's:
+        // ours holds one Position per piece and nothing else, so the
+        // walk is bounded by the collection (3,333) rather than by
+        // every Core asset in existence.
+        //
+        // Ownership is not in the Position, and deliberately so - a
+        // stored owner would go stale the moment someone transferred,
+        // and this program cannot observe transfers. So the pieces come
+        // from us and the owners come from Core, read in batches.
+        const positions = await program.account.position.all();
+        const assetKeys = positions.map((p) => (p.account as any).asset as PublicKey);
+
+        const owned: { id: string; name: string; uri: string }[] = [];
+        for (let i = 0; i < assetKeys.length; i += 100) {
+          const slice = assetKeys.slice(i, i + 100);
+          const infos = await connection.getMultipleAccountsInfo(slice);
+          infos.forEach((info, j) => {
+            if (!info || !info.owner.equals(MPL_CORE_PROGRAM_ID)) return;
+            // owner sits at [1..33]; collection at [34..66] when the
+            // update authority variant at [33] says Collection.
+            const d = info.data;
+            if (new PublicKey(d.subarray(1, 33)).toBase58() !== publicKey.toBase58()) return;
+            if (d[33] !== 2) return;
+            if (new PublicKey(d.subarray(34, 66)).toBase58() !== collection.toBase58()) return;
+            owned.push({
+              id: slice[j].toBase58(),
+              name: readAssetName(d),
+              uri: readAssetUri(d),
+            });
+          });
+        }
+        found = owned;
+      }
+
+      tFind = performance.now();
+      const assets = found.map((f) => new PublicKey(f.id));
       const positions = await program.account.position.fetchMultiple(
         assets.map((a) => positionPda(a))
       );
@@ -262,8 +412,8 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
       setNfts(
         assets.map((asset, i) => ({
           asset,
-          name: readAssetName(accounts[i].account.data),
-          uri: readAssetUri(accounts[i].account.data),
+          name: found![i].name,
+          uri: found![i].uri,
           position: positions[i] ? decodePosition(positions[i]) : null,
         }))
       );
@@ -271,6 +421,12 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
       setNfts([]);
     } finally {
       setLoading(false);
+      const now = performance.now();
+      console.log(
+        `[read:useOwnedNfts] find(${via}) ${Math.round((tFind || now) - t0)}ms · ` +
+          `positions ${Math.round(tFind ? now - tFind : 0)}ms · ` +
+          `total ${Math.round(now - t0)}ms`
+      );
     }
   }, [connection, publicKey, collection, program]);
 
@@ -379,6 +535,7 @@ export const useStakeAccounts = (refreshKey = 0) => {
         return;
       }
       setLoading(true);
+      const t0 = performance.now();
       try {
         // Filter by the `owner` field, which sits right after the 8-byte
         // account discriminator.
@@ -396,6 +553,9 @@ export const useStakeAccounts = (refreshKey = 0) => {
         if (!cancelled) setStakes(new Map());
       } finally {
         if (!cancelled) setLoading(false);
+        console.log(
+          `[read:useStakeAccounts] ${Math.round(performance.now() - t0)}ms`
+        );
       }
     })();
     return () => {

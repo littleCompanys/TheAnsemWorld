@@ -14,6 +14,9 @@ type Row = { pubkey: any; data: Position };
 
 export default function Explorer() {
   const program = useProgram();
+  // No position scan here: this page already fetches every position
+  // itself, so asking useProtocol for the same data would download the
+  // whole collection twice on every visit.
   const { stats } = useProtocol();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +44,9 @@ export default function Explorer() {
   }, [program]);
 
   const acc = stats?.accRewardPerWeight ?? "0";
+  // Counted from the rows this page already has, rather than from the
+  // duplicate scan it used to ask useProtocol for.
+  const activeCount = rows.filter((r) => r.data.active).length;
 
   // What a piece is holding is its settled vault PLUS everything it has
   // earned since. `vault_balance` only moves when something settles the
@@ -80,7 +86,7 @@ export default function Explorer() {
             tracked <b className="mono">{rows.length}</b>
           </div>
           <div className="stat-chip">
-            active <b className="mono">{stats?.activeCount ?? "—"}</b>
+            active <b className="mono">{loading ? "—" : activeCount}</b>
           </div>
         </div>
 
