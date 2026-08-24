@@ -23,17 +23,16 @@ import { confirmSignature } from "../lib/confirmSignature";
 // confirmed failure mode, not a hypothetical one. 25 keeps the whole
 // flow to a handful of approvals.
 const MAX_MINT_QTY = 25;
-/** Stay under Solana's 1232-byte packet limit (signatures inflate the wire size). */
-const TX_SIZE_LIMIT = 1000;
 /**
- * Batches per wallet approval. A big mint can split into dozens of
- * batches (each capped at TX_SIZE_LIMIT); asking a wallet to sign all of
- * them in one `signAllTransactions` call is what actually produced the
- * "too long" error users hit past a handful of pieces - it's not a
- * single transaction's size, it's the size of the request handed to the
- * wallet extension itself. Chunking keeps each approval small and lets
- * a fresh blockhash back every chunk, so a slow approval on chunk 3
- * can't expire the blockhash chunk 8 was built with.
+ * Transactions per wallet approval. A big mint is now one transaction
+ * per piece, so this is what keeps the number of approvals down.
+ *
+ * It cannot be raised much: handing a wallet dozens of transactions in
+ * one `signAllTransactions` call is what produced the "too long" error
+ * users hit past a handful of pieces - not any single transaction's
+ * size, but the size of the request handed to the extension. Chunking
+ * also lets a fresh blockhash back every chunk, so a slow approval on
+ * chunk 3 cannot expire the blockhash chunk 8 was built with.
  */
 const MINT_CHUNK_SIZE = 4;
 
@@ -51,27 +50,6 @@ const MINT_CHUNK_SIZE = 4;
  */
 const CU_BASE = 15_000;
 const CU_PER_MINT = 45_000;
-
-// Transaction.serialize() isn't a pure size probe: it throws
-// ("Transaction too large: X > 1232") the moment the wire size crosses
-// Solana's hard packet limit, instead of just returning a length. With
-// TX_SIZE_LIMIT sitting only ~230 bytes below that hard cap and one more
-// mint_nft instruction costing ~300 bytes, a trial that's already at the
-// soft limit can jump straight past the hard one on the very next piece -
-// so the probe crashes before the packing loop below ever gets to compare
-// against TX_SIZE_LIMIT and split. Treating a thrown probe as "over the
-// limit" (Infinity) instead of letting it escape turns that crash into a
-// normal split.
-function approxTxSize(tx: Transaction): number {
-  try {
-    return tx.serialize({
-      requireAllSignatures: false,
-      verifySignatures: false,
-    }).length;
-  } catch {
-    return Infinity;
-  }
-}
 
 const COLLECTION_NAME = "The Ansem World";
 
@@ -167,70 +145,34 @@ export default function Mint() {
         pieces.push({ ix, asset, address: asset.publicKey.toBase58(), name });
       }
 
-      // Pack mints into as few txs as fit under the 1232-byte limit. Sizing
-      // doesn't depend on the blockhash's actual value (it's always a
-      // fixed-length 32 bytes), so one placeholder is enough for the whole
-      // packing pass - the real blockhash for each group is fetched fresh
-      // right before it's sent, below.
-      const { blockhash: sizingBlockhash } =
-        await connection.getLatestBlockhash("confirmed");
-
-      const newGroup = () => ({
-        // Both compute-budget instructions up front, always. Wallets
-        // (Phantom included) auto-inject a priority-fee instruction into
-        // any transaction that doesn't already carry one, particularly
-        // when the network is congested - bytes our own size estimate
-        // below never saw, which is how a batch that measured under
-        // TX_SIZE_LIMIT still failed as "Transaction too large" once the
-        // wallet finished with it. Supplying our own here means the
-        // wallet has nothing left to add, and the bytes are the ones
-        // this function is already counting.
+      // One piece per transaction.
+      //
+      // These used to be packed several to a transaction, up to the byte
+      // limit, which is cheaper in fees and was fine on-chain. But the
+      // mint is the only action in this app that carries signers beyond
+      // the user's wallet - Metaplex Core uses an asset account's own
+      // address as the NFT's permanent address, so a fresh keypair has
+      // to sign each piece's creation - and it is also the only action
+      // Phantom blocks with "dApp may be malicious". Every other
+      // instruction here signs with the wallet alone and passes.
+      //
+      // Packing three pieces meant handing the wallet a transaction
+      // pre-signed by three keys it had never seen. One piece per
+      // transaction is the fewest such signatures the mint can have: the
+      // wallet, plus the one account being created.
+      //
+      // Approvals are still batched below, so the user does not sign
+      // once per piece.
+      const groups = pieces.map((piece) => ({
         instructions: [
-          // Placeholder limit; rewritten below once the group's real
-          // size is known. Asking for the maximum was the old value and
-          // it was wrong in three ways at once: the priority fee is
-          // charged on the units *requested*, so it billed ~35x what
-          // the mint needs; Solana's scheduler packs blocks by the same
-          // requested figure, so it queued a 36k-unit transaction as if
-          // it were a 1.4M one, which is exactly backwards under the
-          // congestion a launch produces; and a transaction demanding
-          // the per-transaction ceiling reads as atypical to anything
-          // scoring it.
-          ComputeBudgetProgram.setComputeUnitLimit({ units: CU_BASE + CU_PER_MINT }),
+          ComputeBudgetProgram.setComputeUnitLimit({
+            units: CU_BASE + CU_PER_MINT,
+          }),
           ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+          piece.ix,
         ] as TransactionInstruction[],
-        assets: [] as Keypair[],
-      });
-
-      const groups: { instructions: TransactionInstruction[]; assets: Keypair[] }[] = [];
-      let group = newGroup();
-
-      for (const piece of pieces) {
-        const trial = new Transaction();
-        trial.feePayer = publicKey;
-        trial.recentBlockhash = sizingBlockhash;
-        for (const existing of group.instructions) trial.add(existing);
-        trial.add(piece.ix);
-
-        const wouldOverflow =
-          approxTxSize(trial) > TX_SIZE_LIMIT && group.instructions.length > 1;
-
-        if (wouldOverflow) {
-          groups.push(group);
-          group = newGroup();
-        }
-        group.instructions.push(piece.ix);
-        group.assets.push(piece.asset);
-      }
-      if (group.assets.length > 0) groups.push(group);
-
-      // Now that each group's piece count is settled, replace the
-      // placeholder limit with one sized for that group.
-      for (const g of groups) {
-        g.instructions[0] = ComputeBudgetProgram.setComputeUnitLimit({
-          units: CU_BASE + CU_PER_MINT * g.assets.length,
-        });
-      }
+        assets: [piece.asset],
+      }));
 
       // One wallet approval per chunk of groups, not one approval for
       // everything - a signAllTransactions call carrying dozens of
