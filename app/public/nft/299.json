@@ -1,0 +1,50 @@
+{
+  "name": "Ansem World #299",
+  "symbol": "ANSEMW",
+  "description": "A World Piece from The Ansem World protocol. Wake it to earn $ANSEM, raise its tier, or fuse it into something bigger.",
+  "image": "https://secret-herring-7tg9l.lighthouseweb3.xyz/ipfs/bafybeicu6b4wyyah4cgscipjz2fxczdxd2bah2wtw7ajitnbth7epauyaq/images/ansem299.png",
+  "external_url": "https://ansemworld.xyz",
+  "attributes": [
+    {
+      "trait_type": "Type",
+      "value": "Bull"
+    },
+    {
+      "trait_type": "Edition",
+      "value": "Genesis"
+    },
+    {
+      "trait_type": "Background",
+      "value": "Gray"
+    },
+    {
+      "trait_type": "Body",
+      "value": "White"
+    },
+    {
+      "trait_type": "Cloth",
+      "value": "White & Blue Jersey"
+    },
+    {
+      "trait_type": "Mouth",
+      "value": "Confident"
+    },
+    {
+      "trait_type": "Eyes",
+      "value": "Laser Profit Eyes"
+    },
+    {
+      "trait_type": "Hat",
+      "value": "Police Hat"
+    }
+  ],
+  "properties": {
+    "files": [
+      {
+        "uri": "https://secret-herring-7tg9l.lighthouseweb3.xyz/ipfs/bafybeicu6b4wyyah4cgscipjz2fxczdxd2bah2wtw7ajitnbth7epauyaq/images/ansem299.png",
+        "type": "image/png"
+      }
+    ],
+    "category": "image"
+  }
+}

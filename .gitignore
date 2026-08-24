@@ -1,0 +1,15 @@
+.anchor
+.DS_Store
+target
+**/*.rs.bk
+node_modules
+test-ledger
+.yarn
+
+# frontend
+app/node_modules
+app/dist
+.vercel
+
+# program keypair — never commit (controls upgrades)
+target/deploy/*-keypair.json

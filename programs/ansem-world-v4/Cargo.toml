@@ -1,0 +1,35 @@
+[package]
+name = "ansem-world-v4"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "ansem_world_v4"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+anchor-spl = "0.31.1"
+# Pinned exactly: 0.12.1 is the first release whose `anchor` feature
+# targets anchor-lang 0.31.x, which is what this program builds on.
+# Used purely as a deserialization library for reading Core Asset
+# state - we never build Anchor Accounts out of its types. Its
+# `anchor` feature is deliberately NOT enabled: it would make
+# mpl-core's types participate in Anchor's idl-build, and one of its
+# internal types (kaigan's RemainderVec) has no IdlBuild impl, which
+# breaks `anchor build`. Plain borsh keeps the coupling minimal.
+mpl-core = "=0.12.1"
+
+[package.metadata.solana]
+tools-version = "v1.52"
+
