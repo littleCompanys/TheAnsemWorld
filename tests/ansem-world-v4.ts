@@ -7,14 +7,10 @@ import {
   mintTo,
   getAccount,
   getAssociatedTokenAddressSync,
+  TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 
-// The real $ANSEM on mainnet is a Token-2022 mint, and $ANSEMW is
-// expected to come from the same launchpad - so the suite rehearses
-// against Token-2022 rather than the classic program. The program
-// itself accepts either (Interface<TokenInterface>).
-const TOKEN_PROGRAM = TOKEN_2022_PROGRAM_ID;
 import { assert } from "chai";
 import { AnsemWorldV4 } from "../target/types/ansem_world_v4";
 import {
@@ -26,6 +22,16 @@ import {
   mintAsset,
   transferAsset,
 } from "./core-helpers";
+
+// Production is MIXED, and this suite mirrors it exactly: the real
+// $ANSEM ("The Black Bull") is a Token-2022 mint, while the ansem.io
+// launchpad that mints $ANSEMW issues classic SPL Token. The program
+// accepts either (Interface<TokenInterface>), but every instruction
+// must be handed the program that owns the mint it touches - and a
+// mismatch there can only surface when the two actually differ, which
+// is precisely this configuration.
+const ANSEM_TOKEN = TOKEN_2022_PROGRAM_ID;
+const ANSEMW_TOKEN = TOKEN_PROGRAM_ID;
 
 describe("ansem-world-v4", () => {
   // Same reasoning as in core-helpers: a local validator has no
@@ -104,8 +110,8 @@ describe("ansem-world-v4", () => {
     const asset = await mintAsset(umi, collection, kp.publicKey);
     const assetKey = toWeb3(asset.publicKey);
 
-    const ansemw = await createAssociatedTokenAccount(provider.connection, payer, ansemwMint, kp.publicKey, undefined, TOKEN_PROGRAM);
-    await mintTo(provider.connection, payer, ansemwMint, ansemw, provider.wallet.publicKey, ansemwAmount * ANSEMW_UNIT, undefined, undefined, TOKEN_PROGRAM);
+    const ansemw = await createAssociatedTokenAccount(provider.connection, payer, ansemwMint, kp.publicKey, undefined, ANSEMW_TOKEN);
+    await mintTo(provider.connection, payer, ansemwMint, ansemw, provider.wallet.publicKey, ansemwAmount * ANSEMW_UNIT, undefined, undefined, ANSEMW_TOKEN);
 
     return { kp, asset, assetKey, ansemw };
   };
@@ -124,7 +130,7 @@ describe("ansem-world-v4", () => {
         asset,
         ansemwMint,
         ownerAnsemw: ansemw,
-        tokenProgram: TOKEN_PROGRAM,
+        tokenProgram: ANSEMW_TOKEN,
       })
       .signers([holder])
       .rpc();
@@ -135,7 +141,7 @@ describe("ansem-world-v4", () => {
       .accounts({
         funder: provider.wallet.publicKey,
         funderAnsem,
-        tokenProgram: TOKEN_PROGRAM,
+        tokenProgram: ANSEM_TOKEN,
       })
       .rpc();
 
@@ -161,7 +167,7 @@ describe("ansem-world-v4", () => {
       6,
       undefined,
       undefined,
-      TOKEN_PROGRAM
+      ANSEM_TOKEN
     );
     ansemwMint = await createMint(
       provider.connection,
@@ -171,7 +177,7 @@ describe("ansem-world-v4", () => {
       6,
       undefined,
       undefined,
-      TOKEN_PROGRAM
+      ANSEMW_TOKEN
     );
 
     await program.methods
@@ -189,7 +195,10 @@ describe("ansem-world-v4", () => {
         authority: provider.wallet.publicKey,
         ansemMint,
         ansemwMint,
-        tokenProgram: TOKEN_PROGRAM,
+        // The reward vault created here holds $ANSEM, so this must be
+        // $ANSEM's program even though $ANSEMW is also passed (that one
+        // is only read, and InterfaceAccount accepts either program).
+        tokenProgram: ANSEM_TOKEN,
       })
       .rpc();
 
@@ -200,8 +209,8 @@ describe("ansem-world-v4", () => {
       .accounts({ payer: provider.wallet.publicKey })
       .rpc();
 
-    funderAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, provider.wallet.publicKey, undefined, TOKEN_PROGRAM);
-    await mintTo(provider.connection, payer, ansemMint, funderAnsem, provider.wallet.publicKey, 1_000_000_000, undefined, undefined, TOKEN_PROGRAM);
+    funderAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, provider.wallet.publicKey, undefined, ANSEM_TOKEN);
+    await mintTo(provider.connection, payer, ansemMint, funderAnsem, provider.wallet.publicKey, 1_000_000_000, undefined, undefined, ANSEM_TOKEN);
   });
 
   it("records protocol config against the real collection", async () => {
@@ -258,7 +267,7 @@ describe("ansem-world-v4", () => {
     assert.strictEqual(p.active, true);
     assert.strictEqual(p.activationOwner.toBase58(), kp.publicKey.toBase58());
 
-    const acct = await getAccount(provider.connection, ansemw, undefined, TOKEN_PROGRAM);
+    const acct = await getAccount(provider.connection, ansemw, undefined, ANSEMW_TOKEN);
     assert.strictEqual(Number(acct.amount), 0, "$ANSEMW was burned");
   });
 
@@ -274,8 +283,8 @@ describe("ansem-world-v4", () => {
       2 * anchor.web3.LAMPORTS_PER_SOL
     );
     await provider.connection.confirmTransaction(sig, "processed");
-    const attackerAnsemw = await createAssociatedTokenAccount(provider.connection, payer, ansemwMint, attacker.publicKey, undefined, TOKEN_PROGRAM);
-    await mintTo(provider.connection, payer, ansemwMint, attackerAnsemw, provider.wallet.publicKey, ACTIVATION_COST, undefined, undefined, TOKEN_PROGRAM);
+    const attackerAnsemw = await createAssociatedTokenAccount(provider.connection, payer, ansemwMint, attacker.publicKey, undefined, ANSEMW_TOKEN);
+    await mintTo(provider.connection, payer, ansemwMint, attackerAnsemw, provider.wallet.publicKey, ACTIVATION_COST, undefined, undefined, ANSEMW_TOKEN);
 
     try {
       await activate(assetKey, attacker, attackerAnsemw);
@@ -299,7 +308,7 @@ describe("ansem-world-v4", () => {
     const FUND = 5_000_000;
     await fund(FUND);
 
-    const vault = await getAccount(provider.connection, rewardVaultPda, undefined, TOKEN_PROGRAM);
+    const vault = await getAccount(provider.connection, rewardVaultPda, undefined, ANSEM_TOKEN);
     assert.strictEqual(Number(vault.amount), FUND);
 
     await settle(positionPda);
@@ -339,7 +348,7 @@ describe("ansem-world-v4", () => {
 
     await fund(4_000_000);
 
-    const holderAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, kp.publicKey, undefined, TOKEN_PROGRAM);
+    const holderAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, kp.publicKey, undefined, ANSEM_TOKEN);
 
     // A stranger cannot drain the NFT's vault.
     const thief = Keypair.generate();
@@ -348,7 +357,7 @@ describe("ansem-world-v4", () => {
       anchor.web3.LAMPORTS_PER_SOL
     );
     await provider.connection.confirmTransaction(sig, "processed");
-    const thiefAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, thief.publicKey, undefined, TOKEN_PROGRAM);
+    const thiefAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, thief.publicKey, undefined, ANSEM_TOKEN);
 
     try {
       await program.methods
@@ -357,7 +366,7 @@ describe("ansem-world-v4", () => {
           owner: thief.publicKey,
           asset: assetKey,
           ownerAnsem: thiefAnsem,
-          tokenProgram: TOKEN_PROGRAM,
+          tokenProgram: ANSEM_TOKEN,
         })
         .signers([thief])
         .rpc();
@@ -373,12 +382,12 @@ describe("ansem-world-v4", () => {
         owner: kp.publicKey,
         asset: assetKey,
         ownerAnsem: holderAnsem,
-        tokenProgram: TOKEN_PROGRAM,
+        tokenProgram: ANSEM_TOKEN,
       })
       .signers([kp])
       .rpc();
 
-    const acct = await getAccount(provider.connection, holderAnsem, undefined, TOKEN_PROGRAM);
+    const acct = await getAccount(provider.connection, holderAnsem, undefined, ANSEM_TOKEN);
     assert.isAbove(Number(acct.amount), 0);
 
     const after = await program.account.position.fetch(positionPdaFor(assetKey));
@@ -478,7 +487,7 @@ describe("ansem-world-v4", () => {
     );
     await program.methods.syncOwner().accounts({ asset: assetKey }).rpc();
 
-    const buyerAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, buyer.publicKey, undefined, TOKEN_PROGRAM);
+    const buyerAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, buyer.publicKey, undefined, ANSEM_TOKEN);
 
     await program.methods
       .claim()
@@ -486,12 +495,12 @@ describe("ansem-world-v4", () => {
         owner: buyer.publicKey,
         asset: assetKey,
         ownerAnsem: buyerAnsem,
-        tokenProgram: TOKEN_PROGRAM,
+        tokenProgram: ANSEM_TOKEN,
       })
       .signers([buyer])
       .rpc();
 
-    const acct = await getAccount(provider.connection, buyerAnsem, undefined, TOKEN_PROGRAM);
+    const acct = await getAccount(provider.connection, buyerAnsem, undefined, ANSEM_TOKEN);
     assert.strictEqual(
       Number(acct.amount),
       inherited,
@@ -499,7 +508,7 @@ describe("ansem-world-v4", () => {
     );
 
     // And the seller cannot claim it any more.
-    const sellerAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, kp.publicKey, undefined, TOKEN_PROGRAM);
+    const sellerAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, kp.publicKey, undefined, ANSEM_TOKEN);
     try {
       await program.methods
         .claim()
@@ -507,7 +516,7 @@ describe("ansem-world-v4", () => {
           owner: kp.publicKey,
           asset: assetKey,
           ownerAnsem: sellerAnsem,
-          tokenProgram: TOKEN_PROGRAM,
+          tokenProgram: ANSEM_TOKEN,
         })
         .signers([kp])
         .rpc();
@@ -530,7 +539,7 @@ describe("ansem-world-v4", () => {
         asset,
         ansemwMint,
         ownerAnsemw: ansemw,
-        tokenProgram: TOKEN_PROGRAM,
+        tokenProgram: ANSEMW_TOKEN,
       })
       .signers([holder])
       .rpc();
@@ -540,9 +549,9 @@ describe("ansem-world-v4", () => {
     await initPosition(assetKey);
     await activate(assetKey, kp, ansemw);
 
-    const before = Number((await getAccount(provider.connection, ansemw, undefined, TOKEN_PROGRAM)).amount);
+    const before = Number((await getAccount(provider.connection, ansemw, undefined, ANSEMW_TOKEN)).amount);
     await upgrade(assetKey, kp, ansemw, 3);
-    const after = Number((await getAccount(provider.connection, ansemw, undefined, TOKEN_PROGRAM)).amount);
+    const after = Number((await getAccount(provider.connection, ansemw, undefined, ANSEMW_TOKEN)).amount);
 
     // tier 1 -> 3 costs 150,000 - 25,000 (whole $ANSEMW; the balance
     // delta is atomic, so scale the expected cost to match)
@@ -562,25 +571,25 @@ describe("ansem-world-v4", () => {
     await initPosition(stepper.assetKey);
     await activate(stepper.assetKey, stepper.kp, stepper.ansemw);
     const stepStart = Number(
-      (await getAccount(provider.connection, stepper.ansemw, undefined, TOKEN_PROGRAM)).amount
+      (await getAccount(provider.connection, stepper.ansemw, undefined, ANSEMW_TOKEN)).amount
     );
     for (const tier of [2, 3, 4, 5]) {
       await upgrade(stepper.assetKey, stepper.kp, stepper.ansemw, tier);
     }
     const stepSpent =
       stepStart -
-      Number((await getAccount(provider.connection, stepper.ansemw, undefined, TOKEN_PROGRAM)).amount);
+      Number((await getAccount(provider.connection, stepper.ansemw, undefined, ANSEMW_TOKEN)).amount);
 
     const jumper = await makeHolder(2_000_000);
     await initPosition(jumper.assetKey);
     await activate(jumper.assetKey, jumper.kp, jumper.ansemw);
     const jumpStart = Number(
-      (await getAccount(provider.connection, jumper.ansemw, undefined, TOKEN_PROGRAM)).amount
+      (await getAccount(provider.connection, jumper.ansemw, undefined, ANSEMW_TOKEN)).amount
     );
     await upgrade(jumper.assetKey, jumper.kp, jumper.ansemw, 5);
     const jumpSpent =
       jumpStart -
-      Number((await getAccount(provider.connection, jumper.ansemw, undefined, TOKEN_PROGRAM)).amount);
+      Number((await getAccount(provider.connection, jumper.ansemw, undefined, ANSEMW_TOKEN)).amount);
 
     assert.strictEqual(stepSpent, jumpSpent);
     assert.strictEqual(
@@ -655,8 +664,8 @@ describe("ansem-world-v4", () => {
     assert.strictEqual(asleep.tier, 4, "tier survives the sale");
 
     // The buyer pays only the wake-up fee, not the tier again.
-    const buyerAnsemw = await createAssociatedTokenAccount(provider.connection, payer, ansemwMint, buyer.publicKey, undefined, TOKEN_PROGRAM);
-    await mintTo(provider.connection, payer, ansemwMint, buyerAnsemw, provider.wallet.publicKey, ACTIVATION_COST * ANSEMW_UNIT, undefined, undefined, TOKEN_PROGRAM);
+    const buyerAnsemw = await createAssociatedTokenAccount(provider.connection, payer, ansemwMint, buyer.publicKey, undefined, ANSEMW_TOKEN);
+    await mintTo(provider.connection, payer, ansemwMint, buyerAnsemw, provider.wallet.publicKey, ACTIVATION_COST * ANSEMW_UNIT, undefined, undefined, ANSEMW_TOKEN);
     await activate(assetKey, buyer, buyerAnsemw);
 
     const awake = await program.account.position.fetch(positionPdaFor(assetKey));
@@ -664,7 +673,7 @@ describe("ansem-world-v4", () => {
     assert.strictEqual(awake.tier, 4);
     assert.strictEqual(awake.effectiveWeight.toNumber(), TIER_WEIGHTS[3]);
     assert.strictEqual(
-      Number((await getAccount(provider.connection, buyerAnsemw, undefined, TOKEN_PROGRAM)).amount),
+      Number((await getAccount(provider.connection, buyerAnsemw, undefined, ANSEMW_TOKEN)).amount),
       0,
       "buyer paid exactly the activation cost"
     );
@@ -705,7 +714,7 @@ describe("ansem-world-v4", () => {
           asset: assetKey,
           ansemwMint,
           ownerAnsemw: attacker.ansemw,
-          tokenProgram: TOKEN_PROGRAM,
+          tokenProgram: ANSEMW_TOKEN,
         })
         .signers([attacker.kp])
         .rpc();
@@ -913,7 +922,7 @@ describe("ansem-world-v4", () => {
           collection: toWeb3(collection.publicKey),
           ansemwMint,
           ownerAnsemw: ansemw,
-          tokenProgram: TOKEN_PROGRAM,
+          tokenProgram: ANSEMW_TOKEN,
         })
         .signers([holder])
         .rpc();
@@ -933,9 +942,9 @@ describe("ansem-world-v4", () => {
       await activate(assetKey, kp, ansemw);
       await activate(secondKey, kp, ansemw);
 
-      const before = Number((await getAccount(provider.connection, ansemw, undefined, TOKEN_PROGRAM)).amount);
+      const before = Number((await getAccount(provider.connection, ansemw, undefined, ANSEMW_TOKEN)).amount);
       await fuse(assetKey, secondKey, kp, ansemw);
-      const after = Number((await getAccount(provider.connection, ansemw, undefined, TOKEN_PROGRAM)).amount);
+      const after = Number((await getAccount(provider.connection, ansemw, undefined, ANSEMW_TOKEN)).amount);
 
       assert.strictEqual(before - after, FUSE_COSTS[0] * ANSEMW_UNIT);
 
@@ -1104,7 +1113,7 @@ describe("ansem-world-v4", () => {
           asset,
           ansemwMint,
           ownerAnsemw: ansemw,
-          tokenProgram: TOKEN_PROGRAM,
+          tokenProgram: ANSEMW_TOKEN,
         })
         .signers([holder])
         .rpc();
@@ -1124,7 +1133,7 @@ describe("ansem-world-v4", () => {
           collection: toWeb3(collection.publicKey),
           ansemwMint,
           ownerAnsemw: ansemw,
-          tokenProgram: TOKEN_PROGRAM,
+          tokenProgram: ANSEMW_TOKEN,
         })
         .signers([holder])
         .rpc();
@@ -1163,9 +1172,9 @@ describe("ansem-world-v4", () => {
     it("raises an absorbed part and reprices the weight", async () => {
       const a = await fusedPair();
 
-      const before = Number((await getAccount(provider.connection, a.ansemw, undefined, TOKEN_PROGRAM)).amount);
+      const before = Number((await getAccount(provider.connection, a.ansemw, undefined, ANSEMW_TOKEN)).amount);
       await reforge(a.assetKey, a.kp, a.ansemw, 0, 5);
-      const after = Number((await getAccount(provider.connection, a.ansemw, undefined, TOKEN_PROGRAM)).amount);
+      const after = Number((await getAccount(provider.connection, a.ansemw, undefined, ANSEMW_TOKEN)).amount);
 
       // Same table as upgrade_tier: 850,000 - 25,000 (whole $ANSEMW,
       // scaled to atomic to match the balance delta).
@@ -1191,13 +1200,13 @@ describe("ansem-world-v4", () => {
       await activate(before.assetKey, before.kp, before.ansemw);
       await activate(b2Key, before.kp, before.ansemw);
       const beforeStart = Number(
-        (await getAccount(provider.connection, before.ansemw, undefined, TOKEN_PROGRAM)).amount
+        (await getAccount(provider.connection, before.ansemw, undefined, ANSEMW_TOKEN)).amount
       );
       await upgrade(b2Key, before.kp, before.ansemw, 5); // raise, then fuse
       await fuse(before.assetKey, b2Key, before.kp, before.ansemw);
       const beforeSpent =
         beforeStart -
-        Number((await getAccount(provider.connection, before.ansemw, undefined, TOKEN_PROGRAM)).amount);
+        Number((await getAccount(provider.connection, before.ansemw, undefined, ANSEMW_TOKEN)).amount);
 
       const after = await makeHolder(5_000_000);
       const a2 = await mintAsset(umi, collection, after.kp.publicKey);
@@ -1207,13 +1216,13 @@ describe("ansem-world-v4", () => {
       await activate(after.assetKey, after.kp, after.ansemw);
       await activate(a2Key, after.kp, after.ansemw);
       const afterStart = Number(
-        (await getAccount(provider.connection, after.ansemw, undefined, TOKEN_PROGRAM)).amount
+        (await getAccount(provider.connection, after.ansemw, undefined, ANSEMW_TOKEN)).amount
       );
       await fuse(after.assetKey, a2Key, after.kp, after.ansemw); // fuse, then raise
       await reforge(after.assetKey, after.kp, after.ansemw, 0, 5);
       const afterSpent =
         afterStart -
-        Number((await getAccount(provider.connection, after.ansemw, undefined, TOKEN_PROGRAM)).amount);
+        Number((await getAccount(provider.connection, after.ansemw, undefined, ANSEMW_TOKEN)).amount);
 
       assert.strictEqual(beforeSpent, afterSpent);
 
