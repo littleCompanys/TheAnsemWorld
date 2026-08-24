@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, getAccount,
-  TOKEN_PROGRAM_ID,
-} from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { NftImage } from "../components/NftImage";
@@ -13,6 +11,7 @@ import {
   fmtMultiplier,
   shortKey,
   displayVaultBalance,
+  createAtaIfMissing,
   type Position,
 } from "../lib/program";
 import { useOwnedNfts, useProtocol, useProvider, useStakeAccounts, useTokenBalance } from "../lib/useAnsem";
@@ -67,20 +66,10 @@ export default function MyStack() {
 
       // The destination must exist before the program can pay into it.
       const pre: Transaction[] = [];
-      try {
-        await getAccount(connection, ata);
-      } catch {
-        pre.push(
-          new Transaction().add(
-            createAssociatedTokenAccountInstruction(
-              publicKey!,
-              ata,
-              publicKey!,
-              cfg!.ansemMint
-            )
-          )
-        );
-      }
+      const mkAta = await createAtaIfMissing(
+        connection, ata, publicKey!, cfg!.ansemMint, ansemTokenProgram
+      );
+      if (mkAta) pre.push(new Transaction().add(mkAta));
       if (pre.length > 0) {
         const { blockhash, lastValidBlockHeight } =
           await provider!.connection.getLatestBlockhash();
@@ -132,12 +121,11 @@ export default function MyStack() {
       const program = getProgram(provider!);
       const ata = getAssociatedTokenAddressSync(cfg!.ansemMint, publicKey!, false, ansemTokenProgram);
 
-      try {
-        await getAccount(connection, ata);
-      } catch {
-        const tx = new Transaction().add(
-          createAssociatedTokenAccountInstruction(publicKey!, ata, publicKey!, cfg!.ansemMint)
-        );
+      const mkAta = await createAtaIfMissing(
+        connection, ata, publicKey!, cfg!.ansemMint, ansemTokenProgram
+      );
+      if (mkAta) {
+        const tx = new Transaction().add(mkAta);
         const { blockhash, lastValidBlockHeight } =
           await provider!.connection.getLatestBlockhash();
         tx.recentBlockhash = blockhash;
