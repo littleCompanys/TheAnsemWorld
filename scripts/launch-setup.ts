@@ -48,7 +48,7 @@ const ACTIVATION_COST = 25_000;
 const TIER_THRESHOLDS = [25_000, 75_000, 150_000, 300_000, 850_000];
 const TIER_WEIGHTS = [100, 140, 190, 250, 350];
 const FUSE_COSTS = [50_000, 100_000];
-const MINT_PRICE_SOL = 0.1;
+const MINT_PRICE_SOL = 0.05;
 const MAX_SUPPLY = 3_333;
 
 describe("launch:setup", () => {

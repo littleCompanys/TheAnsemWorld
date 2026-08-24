@@ -127,7 +127,7 @@ describe("seed", () => {
           tierThresholds: TIER_THRESHOLDS.map((n) => new anchor.BN(n)),
           tierWeights: TIER_WEIGHTS.map((n) => new anchor.BN(n)),
           fuseCosts: FUSE_COSTS.map((n) => new anchor.BN(n)),
-          mintPrice: new anchor.BN(100_000_000), // 0.1 SOL
+          mintPrice: new anchor.BN(50_000_000), // 0.05 SOL
           maxSupply: 3_333,
         })
         .accounts({
