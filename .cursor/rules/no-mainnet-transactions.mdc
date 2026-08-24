@@ -1,0 +1,34 @@
+---
+description: Proíbe o agente de executar transações ou mudanças na mainnet da Solana
+alwaysApply: true
+---
+
+# PROIBIDO: transações ou mudanças na mainnet da Solana
+
+O agente está **estritamente proibido** de executar qualquer ação que
+altere estado ou gaste fundos na **mainnet** da Solana. Todo deploy,
+inicialização, troca de token, transferência de autoridade e qualquer
+transação de mainnet é executada **pelo usuário**, nunca pelo agente.
+
+## Nunca fazer (mainnet)
+
+- `solana program deploy`, `solana program close`, `solana program set-*`
+- `anchor deploy` / `anchor upgrade` / `anchor migrate` apontando pra mainnet
+- `solana transfer`, `spl-token transfer/mint/burn/create-*`
+- Enviar/assinar qualquer transação, migração ou script que escreva na mainnet
+- Rodar scripts (`npm run ...`, `ts-node`, etc.) que emitam transações de mainnet
+- Trocar o cluster para mainnet e executar comandos com efeito de escrita
+- Usar a keypair/upgrade authority do usuário para assinar qualquer coisa
+
+## Permitido
+
+- Analisar, ler e editar código **localmente**
+- Leituras sem efeito colateral e sem custo (ex.: `spl-token display`,
+  consultas RPC read-only) — mas na dúvida, **prefira apenas orientar**
+- Escrever passo a passo / checklists para o **usuário** executar
+
+## Como agir
+
+Quando uma ação envolver a mainnet, **não execute**: descreva o comando
+e peça para o usuário rodar. Se um pedido parecer exigir uma transação
+de mainnet, pare e confirme com o usuário antes de qualquer coisa.
