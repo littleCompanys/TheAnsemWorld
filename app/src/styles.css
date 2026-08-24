@@ -177,6 +177,11 @@ section{position:relative;}
   padding:36px 40px;
 }
 .paid-block .kicker{color:var(--green);}
+/* USD beside the token total: same baseline, deliberately quiet - it is
+   context for the figure, not a second headline. */
+.big-num-usd{font-family:'JetBrains Mono',monospace;color:var(--text-faint);
+  font-size:.42em;font-weight:400;letter-spacing:0;align-self:flex-end;
+  padding-bottom:.55em;text-shadow:none;}
 .paid-block .big-num{font-family:'Big Shoulders Display',sans-serif;font-weight:900;font-size:clamp(48px,8vw,96px);color:var(--green);line-height:1;text-shadow:0 0 40px var(--green-glow);}
 .paid-block .note{margin-top:12px;color:var(--text-dim);font-size:14px;max-width:560px;line-height:1.6;}
 

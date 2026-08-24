@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Carousel } from "../components/Carousel";
 import { useProtocol } from "../lib/useAnsem";
-import { fmtToken, fmtMultiplier, shortKey, PROGRAM_ID } from "../lib/program";
+import { fmtToken, fmtMultiplier, shortKey, toUi, PROGRAM_ID } from "../lib/program";
+import { usePrices, usdValue } from "../lib/usePrices";
 import { useToast } from "../components/Toast";
 
 /** Keeper cadence shown in the hero (seconds). Override with VITE_ROUND_SECONDS. */
@@ -17,6 +18,7 @@ const LAST_FUND_AT_KEY = "ansem:lastFundAt";
 const PREVIEW_PIECE_COUNT = 12;
 
 export default function Home() {
+  const { ansem: ansemPrice } = usePrices();
   const { stats, loading } = useProtocol();
   const toast = useToast();
   const cfg = stats?.config ?? null;
@@ -37,6 +39,12 @@ export default function Home() {
 
   const ansemMint = cfg?.ansemMint?.toBase58() ?? null;
   const ansemwMint = cfg?.ansemwMint?.toBase58() ?? null;
+
+  // totalClaimed is atomic units; price is per whole token.
+  const paidUsd = usdValue(
+    stats ? toUi(stats.totalClaimed) : null,
+    ansemPrice
+  );
 
   return (
     <>
@@ -257,6 +265,9 @@ export default function Home() {
                   style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover" }}
                 />
                 {stats ? fmtToken(stats.totalClaimed, 2) : "—"}
+                {/* Absent until the price lands - an unpriced total would
+                    read as $0.00, which looks like a real answer. */}
+                {paidUsd && <span className="big-num-usd">{paidUsd}</span>}
               </div>
               <div className="note">
                 $ANSEM claimed out of pieces into wallets. Another{" "}
