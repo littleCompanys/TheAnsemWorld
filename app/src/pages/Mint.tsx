@@ -37,6 +37,21 @@ const TX_SIZE_LIMIT = 1000;
  */
 const MINT_CHUNK_SIZE = 4;
 
+/**
+ * Compute budget, measured rather than guessed.
+ *
+ * Simulated against mainnet: one mint consumes 35,662 units and two
+ * consume 74,024, so the marginal cost of a piece is ~38k and the fixed
+ * overhead is small. These leave roughly 40-60% headroom on top, which
+ * covers the Core CPI growing a little without going back to asking for
+ * the ceiling.
+ *
+ * Re-measure with `simulateTransaction` if mint_nft ever does more work;
+ * a limit set too low fails the whole transaction, not just the excess.
+ */
+const CU_BASE = 15_000;
+const CU_PER_MINT = 45_000;
+
 // Transaction.serialize() isn't a pure size probe: it throws
 // ("Transaction too large: X > 1232") the moment the wire size crosses
 // Solana's hard packet limit, instead of just returning a length. With
@@ -171,7 +186,17 @@ export default function Mint() {
         // wallet has nothing left to add, and the bytes are the ones
         // this function is already counting.
         instructions: [
-          ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+          // Placeholder limit; rewritten below once the group's real
+          // size is known. Asking for the maximum was the old value and
+          // it was wrong in three ways at once: the priority fee is
+          // charged on the units *requested*, so it billed ~35x what
+          // the mint needs; Solana's scheduler packs blocks by the same
+          // requested figure, so it queued a 36k-unit transaction as if
+          // it were a 1.4M one, which is exactly backwards under the
+          // congestion a launch produces; and a transaction demanding
+          // the per-transaction ceiling reads as atypical to anything
+          // scoring it.
+          ComputeBudgetProgram.setComputeUnitLimit({ units: CU_BASE + CU_PER_MINT }),
           ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
         ] as TransactionInstruction[],
         assets: [] as Keypair[],
@@ -198,6 +223,14 @@ export default function Mint() {
         group.assets.push(piece.asset);
       }
       if (group.assets.length > 0) groups.push(group);
+
+      // Now that each group's piece count is settled, replace the
+      // placeholder limit with one sized for that group.
+      for (const g of groups) {
+        g.instructions[0] = ComputeBudgetProgram.setComputeUnitLimit({
+          units: CU_BASE + CU_PER_MINT * g.assets.length,
+        });
+      }
 
       // One wallet approval per chunk of groups, not one approval for
       // everything - a signAllTransactions call carrying dozens of
