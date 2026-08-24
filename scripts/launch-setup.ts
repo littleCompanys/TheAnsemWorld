@@ -54,6 +54,18 @@ const MINT_PRICE_SOL = 0.05;
 /// concatenates, so leaving it off would produce `.../metadata3.json`.
 /// Fixable with `set_base_uri` right up until the first mint, and
 /// frozen the instant one exists.
+/// Where revenue lands. Both default to the authority wallet, which is
+/// fine for a rehearsal - but on a real launch they should be separate
+/// keys, and config.treasury in particular can NEVER be changed once
+/// initialize_protocol has run. A cold wallet or multisig here means a
+/// compromised authority key can pause the protocol but cannot redirect
+/// a single lamport of revenue.
+const TREASURY = process.env.TREASURY ?? null;
+/// Destination of the 5% secondary royalty. Independent of TREASURY -
+/// it lives in the collection's Royalties plugin, not in config - and
+/// equally permanent once claim_collection_authority runs.
+const ROYALTY_DEST = process.env.ROYALTY_DEST ?? null;
+
 const BASE_URI =
   process.env.BASE_URI ??
   "https://secret-herring-7tg9l.lighthouseweb3.xyz/ipfs/bafybeib2kh3ztgx4prmx45uvvvino7j7r6hzcjsokqydb2ws7dhmyhkzn4/";
@@ -94,8 +106,12 @@ describe("launch:setup", () => {
     // PDA's balance to config.treasury, so making config.treasury the PDA
     // itself would mean withdrawing to the same account it drains, a
     // no-op. The wallet is the correct destination.
-    const collection = await createCollection(umi, me);
-    console.log("  collection created with 5% royalty to the authority wallet");
+    const royaltyDest = ROYALTY_DEST ? new PublicKey(ROYALTY_DEST) : me;
+    const collection = await createCollection(umi, royaltyDest);
+    console.log(
+      `  collection created with 5% royalty to ${royaltyDest.toBase58()}` +
+        (ROYALTY_DEST ? "" : " (authority wallet)")
+    );
 
     // Two token mints: $ANSEM (reward) and $ANSEMW (burn/stake). How they
     // are resolved depends entirely on the cluster, and the split is a
@@ -285,7 +301,7 @@ describe("launch:setup", () => {
     await program.methods
       .initializeProtocol({
         coreCollection: toWeb3(collection.publicKey),
-        treasury: me,
+        treasury: TREASURY ? new PublicKey(TREASURY) : me,
         activationCost: new anchor.BN(ACTIVATION_COST),
         tierThresholds: TIER_THRESHOLDS.map((v) => new anchor.BN(v)),
         tierWeights: TIER_WEIGHTS.map((v) => new anchor.BN(v)),
@@ -337,7 +353,12 @@ describe("launch:setup", () => {
     console.log("  cluster       ", provider.connection.rpcEndpoint);
     console.log("  program       ", program.programId.toBase58());
     console.log("  collection    ", cfg.coreCollection.toBase58());
-    console.log("  treasury      ", cfg.treasury.toBase58(), "(authority wallet)");
+    console.log(
+      "  treasury      ",
+      cfg.treasury.toBase58(),
+      cfg.treasury.equals(me) ? "(authority wallet)" : "(separate)"
+    );
+    console.log("  royalty 5%    ", royaltyDest.toBase58());
     console.log("  mint price    ", Number(cfg.mintPrice) / 1e9, "SOL");
     console.log("  base uri      ", cfg.baseUri);
     console.log("  piece #1 uri  ", `${cfg.baseUri}1.json`);
