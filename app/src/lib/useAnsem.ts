@@ -228,16 +228,72 @@ export type OwnedNft = {
 };
 
 /**
+ * Ask the RPC's DAS index which assets a wallet holds.
+ *
+ * The obvious approach - getProgramAccounts on the Core program with
+ * memcmp filters on owner and collection - is what this used to do, and
+ * it is fine on devnet and fatal on mainnet. The filters are applied
+ * while scanning, not before it, so the RPC walks every Core asset in
+ * existence: a few thousand on devnet, millions on mainnet. Measured on
+ * mainnet it ran 25 seconds and then died on the proxy's gateway
+ * timeout, which is what made the Claim page hang.
+ *
+ * DAS answers the same question from an index in about 0.3s. Returns
+ * null when the RPC does not serve it, so the caller can fall back.
+ */
+const dasOwnedAssets = async (
+  endpoint: string,
+  owner: PublicKey,
+  collection: PublicKey
+): Promise<{ id: string; name: string; uri: string }[] | null> => {
+  const out: { id: string; name: string; uri: string }[] = [];
+  const limit = 1000;
+
+  for (let page = 1; ; page++) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAssetsByOwner",
+        params: { ownerAddress: owner.toBase58(), page, limit },
+      }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    // A plain validator answers "method not found" - not an outage, just
+    // an RPC without the index. Say so with null and let gPA handle it.
+    if (json.error) return null;
+
+    const items: any[] = json.result?.items ?? [];
+    for (const it of items) {
+      const inCollection = (it.grouping ?? []).some(
+        (g: any) =>
+          g.group_key === "collection" &&
+          g.group_value === collection.toBase58()
+      );
+      if (!inCollection) continue;
+      out.push({
+        id: it.id,
+        name: it.content?.metadata?.name ?? "Ansem",
+        uri: it.content?.json_uri ?? "",
+      });
+    }
+    // A short page is the last page. Paginating matters for a wallet
+    // holding more than `limit` NFTs of any kind, not just ours - the
+    // collection filter runs after the index has already paged.
+    if (items.length < limit) break;
+  }
+  return out;
+};
+
+/**
  * The NFTs this wallet holds from our collection.
  *
- * Queried straight from Metaplex Core account data rather than an
- * indexing service. A Core asset lays out as:
- *   [0]      key discriminator
- *   [1..33]  owner
- *   [33]     update authority variant (2 = Collection)
- *   [34..66] the collection address
- * so three memcmp filters isolate exactly our collection's assets
- * for one owner. No API key, no third-party dependency.
+ * DAS first, and the Core account scan only if the RPC has no index.
+ * The scan still works against a local validator, where Core holds
+ * almost nothing and walking it costs nothing.
  */
 export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
   const { connection } = useConnection();
@@ -258,18 +314,36 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
     }
     setLoading(true);
     const t0 = performance.now();
-    let tGpa = 0;
+    let tFind = 0;
+    let via = "das";
     try {
-      const accounts = await connection.getProgramAccounts(MPL_CORE_PROGRAM_ID, {
-        filters: [
-          { memcmp: { offset: 1, bytes: publicKey.toBase58() } },
-          { memcmp: { offset: 33, bytes: "3" } }, // base58 of [2] = Collection
-          { memcmp: { offset: 34, bytes: collection.toBase58() } },
-        ],
-      });
+      let found = await dasOwnedAssets(
+        connection.rpcEndpoint,
+        publicKey,
+        collection
+      );
 
-      tGpa = performance.now();
-      const assets = accounts.map((a) => a.pubkey);
+      if (found === null) {
+        via = "gpa";
+        const accounts = await connection.getProgramAccounts(
+          MPL_CORE_PROGRAM_ID,
+          {
+            filters: [
+              { memcmp: { offset: 1, bytes: publicKey.toBase58() } },
+              { memcmp: { offset: 33, bytes: "3" } }, // base58 of [2] = Collection
+              { memcmp: { offset: 34, bytes: collection.toBase58() } },
+            ],
+          }
+        );
+        found = accounts.map((a) => ({
+          id: a.pubkey.toBase58(),
+          name: readAssetName(a.account.data),
+          uri: readAssetUri(a.account.data),
+        }));
+      }
+
+      tFind = performance.now();
+      const assets = found.map((f) => new PublicKey(f.id));
       const positions = await program.account.position.fetchMultiple(
         assets.map((a) => positionPda(a))
       );
@@ -277,8 +351,8 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
       setNfts(
         assets.map((asset, i) => ({
           asset,
-          name: readAssetName(accounts[i].account.data),
-          uri: readAssetUri(accounts[i].account.data),
+          name: found![i].name,
+          uri: found![i].uri,
           position: positions[i] ? decodePosition(positions[i]) : null,
         }))
       );
@@ -288,8 +362,8 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
       setLoading(false);
       const now = performance.now();
       console.log(
-        `[read:useOwnedNfts] core-gpa ${Math.round((tGpa || now) - t0)}ms · ` +
-          `positions ${Math.round(tGpa ? now - tGpa : 0)}ms · ` +
+        `[read:useOwnedNfts] find(${via}) ${Math.round((tFind || now) - t0)}ms · ` +
+          `positions ${Math.round(tFind ? now - tFind : 0)}ms · ` +
           `total ${Math.round(now - t0)}ms`
       );
     }
