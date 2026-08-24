@@ -83,7 +83,7 @@ describe("royalties", () => {
     // ── 3: a piece minted through the program inherits it ──────────
     const asset = Keypair.generate();
     await program.methods
-      .mintNft("Royalty check", "https://example.com/asset.json")
+      .mintNft()
       .accounts({
         buyer: provider.wallet.publicKey,
         asset: asset.publicKey,

@@ -49,6 +49,14 @@ const TIER_THRESHOLDS = [25_000, 75_000, 150_000, 300_000, 850_000];
 const TIER_WEIGHTS = [100, 140, 190, 250, 350];
 const FUSE_COSTS = [50_000, 100_000];
 const MINT_PRICE_SOL = 0.05;
+/// Prefix every piece's metadata URI is built from: piece N resolves to
+/// `${BASE_URI}N.json`. Note the trailing slash - the program simply
+/// concatenates, so leaving it off would produce `.../metadata3.json`.
+/// Fixable with `set_base_uri` right up until the first mint, and
+/// frozen the instant one exists.
+const BASE_URI =
+  process.env.BASE_URI ??
+  "https://secret-herring-7tg9l.lighthouseweb3.xyz/ipfs/bafybeib2kh3ztgx4prmx45uvvvino7j7r6hzcjsokqydb2ws7dhmyhkzn4/";
 const MAX_SUPPLY = 3_333;
 
 describe("launch:setup", () => {
@@ -284,6 +292,7 @@ describe("launch:setup", () => {
         fuseCosts: FUSE_COSTS.map((v) => new anchor.BN(v)),
         mintPrice: new anchor.BN(Math.round(MINT_PRICE_SOL * 1e9)),
         maxSupply: MAX_SUPPLY,
+        baseUri: BASE_URI,
       })
       // The reward vault is created here as an account of the $ANSEM
       // mint, so this has to be $ANSEM's own program (Token-2022 on
@@ -304,6 +313,14 @@ describe("launch:setup", () => {
       .rpc();
     console.log("  fuse feed created");
 
+    // Create the stake vault now rather than leaving the first staker
+    // to discover it is missing mid-flow.
+    await program.methods
+      .initializeStakeVault()
+      .accounts({ payer: me, ansemwMint, tokenProgram: ansemwTokenProgram })
+      .rpc();
+    console.log("  stake vault created");
+
     // Lock all minting behind the program.
     await program.methods
       .claimCollectionAuthority()
@@ -322,6 +339,8 @@ describe("launch:setup", () => {
     console.log("  collection    ", cfg.coreCollection.toBase58());
     console.log("  treasury      ", cfg.treasury.toBase58(), "(authority wallet)");
     console.log("  mint price    ", Number(cfg.mintPrice) / 1e9, "SOL");
+    console.log("  base uri      ", cfg.baseUri);
+    console.log("  piece #1 uri  ", `${cfg.baseUri}1.json`);
     console.log("  supply        ", Number(cfg.currentSupply), "/", Number(cfg.maxSupply));
     console.log("  minting       ", cfg.paused ? "CLOSED" : "LIVE");
     const suffix = isMainnet ? ":mainnet" : local ? "" : ":devnet";

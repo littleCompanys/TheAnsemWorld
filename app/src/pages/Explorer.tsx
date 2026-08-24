@@ -5,6 +5,7 @@ import {
   fmtToken,
   fmtMultiplier,
   shortKey,
+  displayVaultBalance,
   type Position,
 } from "../lib/program";
 import { useProgram, useProtocol } from "../lib/useAnsem";
@@ -25,12 +26,11 @@ export default function Explorer() {
       setLoading(true);
       try {
         const all = await fetchAllPositions(program);
-        if (!cancelled) {
-          // Biggest earners first - that is what anyone browsing the
-          // collection actually wants to see.
-          all.sort((a, b) => b.data.vaultBalance - a.data.vaultBalance);
-          setRows(all);
-        }
+        // Deliberately unsorted here. Ranking needs the reward
+        // accumulator, which arrives from useProtocol on its own
+        // schedule - sorting at fetch time would order the list by
+        // whatever had been settled, which is usually nothing.
+        if (!cancelled) setRows(all);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -40,7 +40,21 @@ export default function Explorer() {
     };
   }, [program]);
 
-  const shown = onlyActive ? rows.filter((r) => r.data.active) : rows;
+  const acc = stats?.accRewardPerWeight ?? "0";
+
+  // What a piece is holding is its settled vault PLUS everything it has
+  // earned since. `vault_balance` only moves when something settles the
+  // position - a claim, an upgrade, a fuse - so for a piece that has
+  // simply been earning it sits at zero, and reading it raw reported
+  // "empty vault" for pieces holding thousands of $ANSEM.
+  //
+  // That is the one number this page exists to publish: a buyer checks a
+  // piece's vault to know what it is worth, because the vault travels
+  // with the NFT. Under-reporting it would have buyers underpaying and
+  // sellers handing over a stack they did not know they had.
+  const shown = (onlyActive ? rows.filter((r) => r.data.active) : rows)
+    .map((r) => ({ ...r, holding: displayVaultBalance(r.data, acc) }))
+    .sort((a, b) => b.holding - a.holding);
 
   return (
     <main className="page">
@@ -80,7 +94,7 @@ export default function Explorer() {
         )}
 
         <div className="nft-grid">
-          {shown.map(({ data }) => {
+          {shown.map(({ data, holding }) => {
             const id = data.asset.toBase58();
             return (
               <div className="nft-card" key={id}>
@@ -127,10 +141,10 @@ export default function Explorer() {
                     >
                       HOLDING
                     </span>
-                    <span className={`amt${data.vaultBalance === 0 ? " zero" : ""}`}>
-                      {data.vaultBalance === 0
+                    <span className={`amt${holding === 0 ? " zero" : ""}`}>
+                      {holding === 0
                         ? "empty vault"
-                        : `${fmtToken(data.vaultBalance)} $ANSEM`}
+                        : `${fmtToken(holding)} $ANSEM`}
                     </span>
                   </div>
                 </div>

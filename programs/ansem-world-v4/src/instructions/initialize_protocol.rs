@@ -3,7 +3,10 @@ use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::{
     errors::AnsemError,
-    state::{GlobalConfig, RewardState, Treasury, MAX_ABSORBED, REWARD_VAULT_SEED, TIER_COUNT},
+    state::{
+        GlobalConfig, RewardState, Treasury, MAX_ABSORBED, MAX_ACTIVATION_COST,
+        REWARD_VAULT_SEED, TIER_COUNT,
+    },
 };
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -18,6 +21,9 @@ pub struct InitializeProtocolArgs {
     pub mint_price: u64,
     /// Hard supply cap. 0 = unlimited.
     pub max_supply: u32,
+    /// Prefix each piece's metadata URI is built from - see
+    /// GlobalConfig::base_uri. Changeable until the first mint.
+    pub base_uri: String,
 }
 
 #[derive(Accounts)]
@@ -96,6 +102,14 @@ pub fn handler(ctx: Context<InitializeProtocol>, args: InitializeProtocolArgs) -
     for cost in args.fuse_costs.iter() {
         require!(*cost > 0, AnsemError::InvalidTierTable);
     }
+    require!(
+        !args.base_uri.is_empty() && args.base_uri.len() <= 128,
+        AnsemError::InvalidBaseUri
+    );
+    require!(
+        args.activation_cost <= MAX_ACTIVATION_COST,
+        AnsemError::ActivationCostTooHigh
+    );
 
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.authority.key();
@@ -114,6 +128,8 @@ pub fn handler(ctx: Context<InitializeProtocol>, args: InitializeProtocolArgs) -
     config.max_supply = args.max_supply;
     config.current_supply = 0;
     config.collection_claimed = false;
+    config.base_uri = args.base_uri;
+    config.reserved = [0u8; 64];
 
     let reward_state = &mut ctx.accounts.reward_state;
     reward_state.total_weight = 0;
@@ -121,10 +137,12 @@ pub fn handler(ctx: Context<InitializeProtocol>, args: InitializeProtocolArgs) -
     reward_state.total_allocated = 0;
     reward_state.total_claimed = 0;
     reward_state.bump = ctx.bumps.reward_state;
+    reward_state.reserved = [0u8; 64];
 
     let treasury = &mut ctx.accounts.treasury_vault;
     treasury.total_withdrawn = 0;
     treasury.bump = ctx.bumps.treasury_vault;
+    treasury.reserved = [0u8; 64];
 
     Ok(())
 }

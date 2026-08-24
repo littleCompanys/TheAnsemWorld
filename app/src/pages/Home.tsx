@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Carousel } from "../components/Carousel";
 import { useProtocol } from "../lib/useAnsem";
-import { fmtToken, fmtMultiplier, shortKey, PROGRAM_ID } from "../lib/program";
+import { fmtToken, fmtMultiplier, shortKey, toUi, PROGRAM_ID } from "../lib/program";
+import { usePrices, usdValue } from "../lib/usePrices";
 import { useToast } from "../components/Toast";
 
 /** Keeper cadence shown in the hero (seconds). Override with VITE_ROUND_SECONDS. */
@@ -17,6 +18,7 @@ const LAST_FUND_AT_KEY = "ansem:lastFundAt";
 const PREVIEW_PIECE_COUNT = 12;
 
 export default function Home() {
+  const { ansem: ansemPrice } = usePrices();
   const { stats, loading } = useProtocol();
   const toast = useToast();
   const cfg = stats?.config ?? null;
@@ -37,6 +39,12 @@ export default function Home() {
 
   const ansemMint = cfg?.ansemMint?.toBase58() ?? null;
   const ansemwMint = cfg?.ansemwMint?.toBase58() ?? null;
+
+  // totalClaimed is atomic units; price is per whole token.
+  const paidUsd = usdValue(
+    stats ? toUi(stats.totalClaimed) : null,
+    ansemPrice
+  );
 
   return (
     <>
@@ -93,7 +101,7 @@ export default function Home() {
               <div className="stat-chip">
                 paid to holders{" "}
                 <b className="mono">
-                  {stats ? fmtToken(stats.totalClaimed, 2) : "—"}
+                  {stats ? fmtToken(stats.totalClaimed) : "—"}
                 </b>
               </div>
             </div>
@@ -155,12 +163,6 @@ export default function Home() {
           <div className="hero-visual">
             <div className="frame">
               <Carousel imgClassName="hero-art" alt="The Ansem World" />
-            </div>
-            <div className="horn-ring">
-              <div className="ring-label">
-                in reward vault
-                <b>{stats ? fmtToken(stats.vaultBalance, 2) : "—"}</b>
-              </div>
             </div>
           </div>
         </div>
@@ -262,12 +264,15 @@ export default function Home() {
                   alt="$ANSEM"
                   style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover" }}
                 />
-                {stats ? fmtToken(stats.totalClaimed, 2) : "—"}
+                {stats ? fmtToken(stats.totalClaimed) : "—"}
+                {/* Absent until the price lands - an unpriced total would
+                    read as $0.00, which looks like a real answer. */}
+                {paidUsd && <span className="big-num-usd">{paidUsd}</span>}
               </div>
               <div className="note">
                 $ANSEM claimed out of pieces into wallets. Another{" "}
                 <b className="mono" style={{ color: "var(--green)" }}>
-                  {stats ? fmtToken(stats.totalAllocated - stats.totalClaimed, 2) : "—"}
+                  {stats ? fmtToken(stats.totalAllocated - stats.totalClaimed) : "—"}
                 </b>{" "}
                 has been allocated on-chain and is still sitting in NFT vaults or
                 pending settle.
@@ -341,7 +346,7 @@ export default function Home() {
                 <div>
                   <div className="label mono">TOTAL ALLOCATED</div>
                   <div className="val">
-                    {stats ? fmtToken(stats.totalAllocated, 2) : "—"}
+                    {stats ? fmtToken(stats.totalAllocated) : "—"}
                   </div>
                 </div>
                 <div className="desc">
@@ -353,7 +358,7 @@ export default function Home() {
                 <div>
                   <div className="label mono">REWARD VAULT</div>
                   <div className="val">
-                    {stats ? fmtToken(stats.vaultBalance, 2) : "—"}
+                    {stats ? fmtToken(stats.vaultBalance) : "—"}
                   </div>
                 </div>
                 <div className="desc">

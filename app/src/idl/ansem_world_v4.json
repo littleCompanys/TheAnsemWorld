@@ -1,5 +1,5 @@
 {
-  "address": "76wKrPcMUFRuj44oWCUt7XRVEMbemYjiAW6pkdLGU9bJ",
+  "address": "EkdJTwzMJGjPovsrwpMSeHzRcDQ98JXUvs6AwPLjwg8t",
   "metadata": {
     "name": "ansem_world_v4",
     "version": "0.1.0",
@@ -1036,7 +1036,11 @@
       "docs": [
         "Mints one World Piece NFT from the official collection and",
         "creates the corresponding Position PDA in one transaction.",
-        "Charges mint_price SOL to the treasury."
+        "Charges mint_price SOL to the treasury.",
+        "",
+        "Takes no metadata: name and URI are derived from base_uri and",
+        "the mint counter, so which piece a buyer gets is decided by",
+        "when they minted, not by what they asked for."
       ],
       "discriminator": [
         211,
@@ -1160,16 +1164,91 @@
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": [
+      "args": []
+    },
+    {
+      "name": "reap_burned",
+      "docs": [
+        "Clears a position whose NFT was burned outside fuse, returning",
+        "its stranded weight to the pool. Permissionless."
+      ],
+      "discriminator": [
+        26,
+        72,
+        91,
+        226,
+        66,
+        58,
+        188,
+        96
+      ],
+      "accounts": [
         {
-          "name": "name",
-          "type": "string"
+          "name": "asset",
+          "docs": [
+            "*gone*. The handler proves it is no longer a live Core asset",
+            "before touching anything."
+          ]
         },
         {
-          "name": "uri",
-          "type": "string"
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_receiver",
+          "docs": [
+            "Whoever pays for the cleanup gets the Position's rent."
+          ],
+          "writable": true
         }
-      ]
+      ],
+      "args": []
     },
     {
       "name": "reforge",
@@ -1293,7 +1372,8 @@
     {
       "name": "set_activation_cost",
       "docs": [
-        "Adjusts the wake-up fee. Tier pricing stays immutable."
+        "Adjusts the wake-up fee, up to MAX_ACTIVATION_COST. Tier",
+        "pricing stays immutable."
       ],
       "discriminator": [
         227,
@@ -1334,6 +1414,53 @@
         {
           "name": "cost",
           "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_base_uri",
+      "docs": [
+        "Corrects the metadata prefix. Only works before the first mint."
+      ],
+      "discriminator": [
+        227,
+        95,
+        247,
+        32,
+        191,
+        190,
+        124,
+        60
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "base_uri",
+          "type": "string"
         }
       ]
     },
@@ -2438,6 +2565,26 @@
       "code": 6026,
       "name": "StakeBonusOnFuse",
       "msg": "Unstake or unfocus before fusing a piece that carries a stake bonus"
+    },
+    {
+      "code": 6027,
+      "name": "InvalidBaseUri",
+      "msg": "Base URI is empty or too long"
+    },
+    {
+      "code": 6028,
+      "name": "BaseUriLocked",
+      "msg": "The base URI is frozen once the first piece has been minted"
+    },
+    {
+      "code": 6029,
+      "name": "ActivationCostTooHigh",
+      "msg": "Activation cost is above the hard ceiling"
+    },
+    {
+      "code": 6030,
+      "name": "AssetStillExists",
+      "msg": "This asset still exists - nothing to reap"
     }
   ],
   "types": [
@@ -2669,6 +2816,37 @@
               "the instruction would panic without a valid PDA signature."
             ],
             "type": "bool"
+          },
+          {
+            "name": "base_uri",
+            "docs": [
+              "Prefix every piece's metadata URI is built from. The full URI is",
+              "`{base_uri}{index}.json`, where index is the piece's mint order.",
+              "",
+              "This is what keeps metadata out of the caller's hands. mint_nft",
+              "takes no name or uri argument at all, so the art a buyer receives",
+              "is decided by when they minted, not by what they asked for -",
+              "which is verifiable by anyone reading the chain.",
+              "",
+              "Mutable only while current_supply is 0, so a typo is fixable",
+              "before the first mint and frozen forever after."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "Room for fields added later. Anchor lays accounts out in",
+              "declaration order, so growing a live account means reallocating",
+              "every one of them; paying for the space up front is far cheaper",
+              "than migrating thousands of PDAs afterwards."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }
@@ -2730,6 +2908,14 @@
               "Hard supply cap. 0 = unlimited."
             ],
             "type": "u32"
+          },
+          {
+            "name": "base_uri",
+            "docs": [
+              "Prefix each piece's metadata URI is built from - see",
+              "GlobalConfig::base_uri. Changeable until the first mint."
+            ],
+            "type": "string"
           }
         ]
       }
@@ -2852,6 +3038,20 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "See GlobalConfig::reserved. Costs ~0.00045 SOL of extra rent per",
+              "piece, paid by the buyer at mint - the price of never having to",
+              "realloc 3,333 accounts."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }
@@ -2898,6 +3098,18 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "See GlobalConfig::reserved."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }
@@ -2972,6 +3184,18 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "See GlobalConfig::reserved."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
           }
         ]
       }

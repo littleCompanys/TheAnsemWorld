@@ -63,6 +63,7 @@ pub fn handler(ctx: Context<InitializePosition>) -> Result<()> {
     position.lifetime_earned = 0;
     position.stake_bonus_pct = 0;
     position.bump = ctx.bumps.position;
+    position.reserved = [0u8; 64];
 
     Ok(())
 }

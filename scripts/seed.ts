@@ -136,6 +136,7 @@ describe("seed", () => {
           fuseCosts: FUSE_COSTS.map((n) => new anchor.BN(n)),
           mintPrice: new anchor.BN(50_000_000), // 0.05 SOL
           maxSupply: 3_333,
+          baseUri: `${METADATA_BASE_URI}/`,
         })
         .accounts({
           authority: provider.wallet.publicKey,
@@ -193,7 +194,7 @@ describe("seed", () => {
           // Position itself.
           const asset = Keypair.generate();
           await program.methods
-            .mintNft(name, uri)
+            .mintNft()
             .accounts({
               buyer: provider.wallet.publicKey,
               asset: asset.publicKey,

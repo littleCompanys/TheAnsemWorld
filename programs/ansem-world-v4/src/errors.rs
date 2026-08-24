@@ -56,4 +56,12 @@ pub enum AnsemError {
     StakeTargetNotYours,
     #[msg("Unstake or unfocus before fusing a piece that carries a stake bonus")]
     StakeBonusOnFuse,
+    #[msg("Base URI is empty or too long")]
+    InvalidBaseUri,
+    #[msg("The base URI is frozen once the first piece has been minted")]
+    BaseUriLocked,
+    #[msg("Activation cost is above the hard ceiling")]
+    ActivationCostTooHigh,
+    #[msg("This asset still exists - nothing to reap")]
+    AssetStillExists,
 }

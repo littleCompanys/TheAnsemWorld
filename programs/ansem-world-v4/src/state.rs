@@ -77,6 +77,25 @@ pub struct GlobalConfig {
     /// True once claim_collection_authority has run. Guards mint_nft:
     /// the instruction would panic without a valid PDA signature.
     pub collection_claimed: bool,
+
+    /// Prefix every piece's metadata URI is built from. The full URI is
+    /// `{base_uri}{index}.json`, where index is the piece's mint order.
+    ///
+    /// This is what keeps metadata out of the caller's hands. mint_nft
+    /// takes no name or uri argument at all, so the art a buyer receives
+    /// is decided by when they minted, not by what they asked for -
+    /// which is verifiable by anyone reading the chain.
+    ///
+    /// Mutable only while current_supply is 0, so a typo is fixable
+    /// before the first mint and frozen forever after.
+    #[max_len(128)]
+    pub base_uri: String,
+
+    /// Room for fields added later. Anchor lays accounts out in
+    /// declaration order, so growing a live account means reallocating
+    /// every one of them; paying for the space up front is far cheaper
+    /// than migrating thousands of PDAs afterwards.
+    pub reserved: [u8; 64],
 }
 
 impl GlobalConfig {
@@ -118,6 +137,8 @@ pub struct RewardState {
     /// Total $ANSEM ever paid out via claim().
     pub total_claimed: u64,
     pub bump: u8,
+    /// See GlobalConfig::reserved.
+    pub reserved: [u8; 64],
 }
 
 impl RewardState {
@@ -168,6 +189,10 @@ pub struct Position {
     /// while the staker still holds and has activated the piece.
     pub stake_bonus_pct: u8,
     pub bump: u8,
+    /// See GlobalConfig::reserved. Costs ~0.00045 SOL of extra rent per
+    /// piece, paid by the buyer at mint - the price of never having to
+    /// realloc 3,333 accounts.
+    pub reserved: [u8; 64],
 }
 
 impl Position {
@@ -230,6 +255,8 @@ pub struct Treasury {
     /// balance + withdrawn - rent.
     pub total_withdrawn: u64,
     pub bump: u8,
+    /// See GlobalConfig::reserved.
+    pub reserved: [u8; 64],
 }
 
 impl Treasury {
@@ -351,3 +378,18 @@ impl FuseFeed {
         self.total = self.total.saturating_add(1);
     }
 }
+
+/// Hard ceiling on `activation_cost`, in whole $ANSEMW.
+///
+/// The authority may tune the wake-up fee, and over the life of a
+/// deflationary token it will almost certainly need to come *down*. The
+/// ceiling exists for the other direction: without it, one bad value
+/// makes `to_atomic` overflow and `activate` reverts for everyone,
+/// permanently. 1,000,000 is 40x the launch cost and 0.1% of supply -
+/// far above any sane setting, far below anything that breaks the math.
+pub const MAX_ACTIVATION_COST: u64 = 1_000_000;
+
+/// Name prefix every minted piece carries: piece N is named
+/// "<prefix> #N". Kept beside the URI derivation so the on-chain name
+/// and the metadata file it points at can never drift apart.
+pub const PIECE_NAME_PREFIX: &str = "The Ansem World";

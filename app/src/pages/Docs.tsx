@@ -109,8 +109,8 @@ export default function Docs() {
             <p>
               The Ansem World is a collection of{" "}
               {maxSupply > 0 ? <b>{n(maxSupply)}</b> : "an unlimited number of"}{" "}
-              NFTs on Solana. A piece you own can be woken up, and while it is
-              awake it earns <b>$ANSEM</b> out of a shared pool.
+              NFTs on Solana. Activate a piece you own to start earning{" "}
+              <b>$ANSEM</b> from the shared reward pool.
             </p>
             <p>
               Two things make it different from most collections. Your

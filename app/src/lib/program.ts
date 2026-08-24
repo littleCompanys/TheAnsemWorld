@@ -1,5 +1,9 @@
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import { PublicKey, Connection } from "@solana/web3.js";
+import { PublicKey, Connection, TransactionInstruction } from "@solana/web3.js";
+import {
+  getAccount,
+  createAssociatedTokenAccountInstruction,
+} from "@solana/spl-token";
 import idl from "../idl/ansem_world_v4.json";
 import type { AnsemWorldV4 } from "../idl/ansem_world_v4";
 
@@ -177,11 +181,29 @@ export const DECIMALS = 6;
 /** Must match `PRECISION` in the on-chain program (`state.rs`). */
 export const REWARD_PRECISION = 1_000_000_000_000n;
 export const toUi = (raw: number) => raw / 10 ** DECIMALS;
-export const fmtToken = (raw: number, digits = 4) =>
-  toUi(raw).toLocaleString("en-US", {
+/**
+ * A token amount, with the precision the size of the number deserves.
+ *
+ * Four decimals on everything read as noise where it mattered most: a
+ * vault holding 18,677.0428 $ANSEM is 18,677, and the fraction only made
+ * the figure harder to scan. But dropping decimals outright would round
+ * dust to "0" and make a real balance look empty, so the scale decides:
+ *
+ *   >= 1,000  whole numbers      18,677
+ *   >= 1      two decimals       12.35
+ *   < 1       four decimals      0.0428
+ *
+ * `digits` still overrides it where a caller has a reason.
+ */
+export const fmtToken = (raw: number, digits?: number) => {
+  const n = toUi(raw);
+  const abs = Math.abs(n);
+  const d = digits ?? (abs >= 1000 ? 0 : abs >= 1 ? 2 : 4);
+  return n.toLocaleString("en-US", {
     minimumFractionDigits: 0,
-    maximumFractionDigits: digits,
+    maximumFractionDigits: d,
   });
+};
 
 /**
  * Vault balance as the UI should show it: settled vault + pending
@@ -222,3 +244,44 @@ export const shortKey = (k: PublicKey | string, n = 4) => {
 
 export const makeConnection = (endpoint: string) =>
   new Connection(endpoint, "processed");
+
+/**
+ * The instruction that creates `ata`, or null when it already exists.
+ *
+ * Both halves need the token program that owns the mint, and neither
+ * defaults to it. $ANSEM is Token-2022, so:
+ *
+ *   - `getAccount` without it decodes against the classic program and
+ *     throws even when the account is there, so the caller "creates" an
+ *     ATA that already exists on every single claim.
+ *   - `createAssociatedTokenAccountInstruction` without it builds a
+ *     classic-program instruction, while the address was derived for
+ *     Token-2022. The ATA program re-derives its own address, finds it
+ *     does not match the one passed in, and the transaction dies with
+ *     "Provided seeds do not result in a valid address" - an error that
+ *     says nothing about token programs and sends you hunting through
+ *     the Rust PDAs instead.
+ *
+ * Shared rather than inlined because the two claim paths had the same
+ * three lines, and fixing one would have left the other broken.
+ */
+export const createAtaIfMissing = async (
+  connection: Connection,
+  ata: PublicKey,
+  owner: PublicKey,
+  mint: PublicKey,
+  tokenProgram: PublicKey
+): Promise<TransactionInstruction | null> => {
+  try {
+    await getAccount(connection, ata, undefined, tokenProgram);
+    return null;
+  } catch {
+    return createAssociatedTokenAccountInstruction(
+      owner,
+      ata,
+      owner,
+      mint,
+      tokenProgram
+    );
+  }
+};

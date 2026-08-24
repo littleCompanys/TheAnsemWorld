@@ -8,7 +8,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("76wKrPcMUFRuj44oWCUt7XRVEMbemYjiAW6pkdLGU9bJ");
+declare_id!("EkdJTwzMJGjPovsrwpMSeHzRcDQ98JXUvs6AwPLjwg8t");
 
 #[program]
 pub mod ansem_world_v4 {
@@ -88,7 +88,8 @@ pub mod ansem_world_v4 {
         admin::transfer_authority(ctx, new_authority)
     }
 
-    /// Adjusts the wake-up fee. Tier pricing stays immutable.
+    /// Adjusts the wake-up fee, up to MAX_ACTIVATION_COST. Tier
+    /// pricing stays immutable.
     pub fn set_activation_cost(ctx: Context<AdminOnly>, cost: u64) -> Result<()> {
         admin::set_activation_cost(ctx, cost)
     }
@@ -130,12 +131,12 @@ pub mod ansem_world_v4 {
     /// Mints one World Piece NFT from the official collection and
     /// creates the corresponding Position PDA in one transaction.
     /// Charges mint_price SOL to the treasury.
-    pub fn mint_nft(
-        ctx: Context<MintNft>,
-        name: String,
-        uri: String,
-    ) -> Result<()> {
-        mint_nft::handler(ctx, name, uri)
+    ///
+    /// Takes no metadata: name and URI are derived from base_uri and
+    /// the mint counter, so which piece a buyer gets is decided by
+    /// when they minted, not by what they asked for.
+    pub fn mint_nft(ctx: Context<MintNft>) -> Result<()> {
+        mint_nft::handler(ctx)
     }
 
     /// Updates the SOL price per mint.
@@ -146,6 +147,17 @@ pub mod ansem_world_v4 {
     /// Updates the hard supply cap.
     pub fn set_max_supply(ctx: Context<AdminOnly>, max: u32) -> Result<()> {
         admin::set_max_supply(ctx, max)
+    }
+
+    /// Corrects the metadata prefix. Only works before the first mint.
+    pub fn set_base_uri(ctx: Context<AdminOnly>, base_uri: String) -> Result<()> {
+        admin::set_base_uri(ctx, base_uri)
+    }
+
+    /// Clears a position whose NFT was burned outside fuse, returning
+    /// its stranded weight to the pool. Permissionless.
+    pub fn reap_burned(ctx: Context<ReapBurned>) -> Result<()> {
+        reap_burned::handler(ctx)
     }
 
     /// Creates the vault that holds locked $ANSEMW. Call once, after

@@ -65,7 +65,7 @@ export default function App() {
                     alt="$ANSEM"
                     style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }}
                   />
-                  <b>{fmtToken(ansemBalance, 2)}</b>
+                  <b>{fmtToken(ansemBalance)}</b>
                 </div>
                 <div className="wallet-balance mono" title="$ANSEMW in this wallet">
                   <img
@@ -73,7 +73,7 @@ export default function App() {
                     alt="$ANSEMW"
                     style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }}
                   />
-                  <b>{fmtToken(ansemwBalance, 2)}</b>
+                  <b>{fmtToken(ansemwBalance)}</b>
                 </div>
               </>
             )}

@@ -17,6 +17,7 @@ import { PublicKey } from "@solana/web3.js";
 import {
   getOrCreateAssociatedTokenAccount,
   mintTo,
+  TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { AnsemWorldV4 } from "../target/types/ansem_world_v4";
 
@@ -52,11 +53,32 @@ describe("faucet:ansem", () => {
     const base = whole * BigInt(1e6); // 6 decimals
 
     const payer = (provider.wallet as anchor.Wallet).payer;
+
+    // Which token program owns $ANSEM decides the ATA address and how
+    // every instruction below must be issued. It is not fixed: $ANSEM is
+    // Token-2022 on mainnet, and launch-setup mints the devnet stand-in
+    // as Token-2022 too so a rehearsal exercises the same program.
+    // Defaulting to the classic program derives an address that cannot
+    // exist for such a mint, and the failure reads as the opaque
+    // TokenAccountNotFoundError rather than anything about programs.
+    const mintAcct = await provider.connection.getAccountInfo(ansemMint);
+    if (!mintAcct) {
+      throw new Error(
+        `the configured $ANSEM mint ${ansemMint.toBase58()} does not exist ` +
+          "on this cluster - you are probably pointed at the wrong network."
+      );
+    }
+    const tokenProgram = mintAcct.owner ?? TOKEN_PROGRAM_ID;
+
     const ata = await getOrCreateAssociatedTokenAccount(
       provider.connection,
       payer,
       ansemMint,
-      target
+      target,
+      false,
+      undefined,
+      undefined,
+      tokenProgram
     );
 
     await mintTo(
@@ -65,12 +87,16 @@ describe("faucet:ansem", () => {
       ansemMint,
       ata.address,
       provider.wallet.publicKey,
-      base
+      base,
+      [],
+      undefined,
+      tokenProgram
     );
 
     console.log(`\n  minted ${T(whole)} $ANSEM`);
     console.log("  to wallet ", target.toBase58());
     console.log("  token acct", ata.address.toBase58());
     console.log("  $ANSEM mint", ansemMint.toBase58());
+    console.log("  token program", tokenProgram.toBase58());
   });
 });

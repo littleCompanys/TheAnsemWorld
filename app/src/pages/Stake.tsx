@@ -143,7 +143,7 @@ export default function Stake() {
         <div className="notice">
           Wallet balance:{" "}
           <b className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {fmtToken(ansemwBalance, 2)}
+            {fmtToken(ansemwBalance)}
             <img
               src="/ansemw-icon.png"
               alt="$ANSEMW"
@@ -157,7 +157,7 @@ export default function Stake() {
               Locked across {stakedCount}{" "}
               {stakedCount === 1 ? "piece" : "pieces"}:{" "}
               <b className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {fmtToken(totalLocked, 2)}
+                {fmtToken(totalLocked)}
                 <img
                   src="/ansemw-icon.png"
                   alt="$ANSEMW"
@@ -302,7 +302,7 @@ function PieceStakeCard({
           <div className="kv-row">
             <span className="k">LOCKED</span>
             <span className="v mono">
-              {locked > 0 ? fmtToken(locked, 2) : "—"}
+              {locked > 0 ? fmtToken(locked) : "—"}
             </span>
           </div>
           <div className="kv-row">
@@ -315,10 +315,7 @@ function PieceStakeCard({
             <span className="k">NEXT TIER</span>
             <span className="v mono" style={{ color: "var(--text-faint)" }}>
               {nextTier
-                ? `+${nextTier.bonusPct}% · lock ${fmtToken(
-                    nextTier.needBase,
-                    0
-                  )} more`
+                ? `+${nextTier.bonusPct}% · lock ${fmtToken(nextTier.needBase)} more`
                 : "MAX"}
             </span>
           </div>
@@ -339,7 +336,7 @@ function PieceStakeCard({
 
         {amountUi && parseAmount(amountUi) !== null && (
           <div className="cost-hint">
-            After this: <b>{fmtToken(previewBase, 2)}</b> locked →{" "}
+            After this: <b>{fmtToken(previewBase)}</b> locked →{" "}
             <b className="green">+{previewBonus}%</b>
             {previewBonus > currentBonus && " (tier up)"}
           </div>
