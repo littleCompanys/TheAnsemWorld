@@ -13,6 +13,7 @@ import { getProgram } from "../lib/program";
 import { useProtocol, useProvider } from "../lib/useAnsem";
 import { useRequireWallet } from "../lib/useRequireWallet";
 import { confirmSignature } from "../lib/confirmSignature";
+import { notifyChainChanged } from "../lib/refresh";
 
 // Every mint_nft call handles exactly one piece - there is no on-chain
 // batch-mint instruction - and every piece needs its own wallet
@@ -49,7 +50,13 @@ export default function Mint() {
   const toast = useToast();
   const requireWallet = useRequireWallet();
   const [refresh, setRefresh] = useState(0);
-  const bump = () => setRefresh((v) => v + 1);
+  // Refresh this page, and tell the rest of the app - the header's
+  // token balances live outside every page and have no other way to
+  // learn that a burn just happened.
+  const bump = () => {
+    setRefresh((v) => v + 1);
+    notifyChainChanged();
+  };
 
   const { stats, loading } = useProtocol(refresh);
   const cfg = stats?.config ?? null;

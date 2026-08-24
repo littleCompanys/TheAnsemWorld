@@ -5,6 +5,7 @@ import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useProtocol, useTokenBalance } from "./lib/useAnsem";
 import { fmtToken } from "./lib/program";
 import { usePrices, fmtUsd } from "./lib/usePrices";
+import { useChainRefresh } from "./lib/refresh";
 import Home from "./pages/Home";
 import Activate from "./pages/Activate";
 import MyStack from "./pages/MyStack";
@@ -28,9 +29,19 @@ const LINKS = [
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { connected } = useWallet();
-  const { stats } = useProtocol();
-  const ansemBalance = useTokenBalance(stats?.config?.ansemMint ?? null);
-  const ansemwBalance = useTokenBalance(stats?.config?.ansemwMint ?? null);
+  // The header outlives every page, so it needs the app-wide signal
+  // rather than any page's own counter - otherwise burning $ANSEMW on
+  // the Activate page updates that page and leaves this number stale.
+  const chainRefresh = useChainRefresh();
+  const { stats } = useProtocol(chainRefresh);
+  const ansemBalance = useTokenBalance(
+    stats?.config?.ansemMint ?? null,
+    chainRefresh
+  );
+  const ansemwBalance = useTokenBalance(
+    stats?.config?.ansemwMint ?? null,
+    chainRefresh
+  );
 
   return (
     <>

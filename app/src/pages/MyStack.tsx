@@ -18,6 +18,7 @@ import { useOwnedNfts, useProtocol, useProvider, useStakeAccounts, useTokenBalan
 import { useRequireWallet } from "../lib/useRequireWallet";
 import { rpcSafe } from "../lib/rpcSafe";
 import { confirmSignature } from "../lib/confirmSignature";
+import { notifyChainChanged } from "../lib/refresh";
 import { Link } from "react-router-dom";
 import { NotInitialized, ProtocolLoading, ConnectionIssue } from "./Activate";
 
@@ -28,7 +29,13 @@ export default function MyStack() {
   const toast = useToast();
   const requireWallet = useRequireWallet();
   const [refresh, setRefresh] = useState(0);
-  const bump = () => setRefresh((v) => v + 1);
+  // Refresh this page, and tell the rest of the app - the header's
+  // token balances live outside every page and have no other way to
+  // learn that a burn just happened.
+  const bump = () => {
+    setRefresh((v) => v + 1);
+    notifyChainChanged();
+  };
 
   // When the wallet adapter actually hands over a publicKey. Every
   // per-wallet hook below is blocked until it does, so if the page feels

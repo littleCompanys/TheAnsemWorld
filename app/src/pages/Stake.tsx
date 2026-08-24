@@ -27,6 +27,7 @@ import {
 import { NotInitialized, ProtocolLoading, ConnectionIssue } from "./Activate";
 import { useRequireWallet } from "../lib/useRequireWallet";
 import { rpcSafe } from "../lib/rpcSafe";
+import { notifyChainChanged } from "../lib/refresh";
 
 const parseAmount = (raw: string): number | null => {
   const n = Number(raw.replace(/,/g, "").trim());
@@ -40,7 +41,13 @@ export default function Stake() {
   const toast = useToast();
   const requireWallet = useRequireWallet();
   const [refresh, setRefresh] = useState(0);
-  const bump = () => setRefresh((v) => v + 1);
+  // Refresh this page, and tell the rest of the app - the header's
+  // token balances live outside every page and have no other way to
+  // learn that a burn just happened.
+  const bump = () => {
+    setRefresh((v) => v + 1);
+    notifyChainChanged();
+  };
 
   const { stats, loading: protocolLoading, fetchError } = useProtocol(refresh);
   const cfg = stats?.config ?? null;
