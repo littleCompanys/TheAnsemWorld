@@ -25,16 +25,20 @@ import { confirmSignature } from "../lib/confirmSignature";
 const MAX_MINT_QTY = 25;
 /**
  * Transactions per wallet approval. A big mint is now one transaction
- * per piece, so this is what keeps the number of approvals down.
+ * per piece, so this is what keeps the number of prompts down.
  *
- * It cannot be raised much: handing a wallet dozens of transactions in
- * one `signAllTransactions` call is what produced the "too long" error
- * users hit past a handful of pieces - not any single transaction's
- * size, but the size of the request handed to the extension. Chunking
- * also lets a fresh blockhash back every chunk, so a slow approval on
- * chunk 3 cannot expire the blockhash chunk 8 was built with.
+ * What actually blows up is the size of the request handed to the
+ * extension, not the count: `signAllTransactions` carrying dozens of
+ * transactions is what produced the "too long" error users hit past a
+ * handful of pieces. Four packed transactions were ~1000 bytes each, so
+ * roughly 4KB per approval was the known-good figure. One piece per
+ * transaction is 526 bytes, so eight of them sit at the same 4KB - twice
+ * the pieces per prompt, no more bytes than before.
+ *
+ * Chunking also gives each group a fresh blockhash, so a slow approval
+ * on one chunk cannot expire the next one's.
  */
-const MINT_CHUNK_SIZE = 4;
+const MINT_CHUNK_SIZE = 8;
 
 /**
  * Compute budget, measured rather than guessed.
@@ -163,6 +167,7 @@ export default function Mint() {
       //
       // Approvals are still batched below, so the user does not sign
       // once per piece.
+      let failedCount = 0;
       const groups = pieces.map((piece) => ({
         instructions: [
           ComputeBudgetProgram.setComputeUnitLimit({
@@ -193,22 +198,47 @@ export default function Mint() {
           return tx;
         });
 
+        // The whole chunk goes out at once, then confirms at once.
+        //
+        // Sending one and waiting for it before sending the next was
+        // fine when a transaction carried several pieces, but one piece
+        // per transaction turns a 25-piece mint into 25 round trips in
+        // single file - well over half a minute of waiting. Worse, every
+        // transaction in a chunk shares one blockhash with a ~60-90s
+        // life, so a queue that long can expire the tail of its own
+        // chunk. Firing them together keeps a chunk to about the cost of
+        // its slowest member.
+        //
+        // Failures are collected rather than thrown on the first one.
+        // Each transaction now mints exactly one piece, so a failure
+        // costs that piece and nothing else - and the user is better
+        // told "23 of 25 minted" than handed an error that hides the 23
+        // that did land.
         const sendAndConfirmAll = async (signedTxs: Transaction[]) => {
-          for (const stx of signedTxs) {
-            const sig = await connection.sendRawTransaction(stx.serialize(), {
-              skipPreflight: false,
-              preflightCommitment: "confirmed",
-            });
-            // Not connection.confirmTransaction(): every strategy it offers
-            // races an onSignature WebSocket subscription, which never
-            // connects on this app's HTTP-only RPC proxy - so the REST
-            // fallback inside that same race never runs either, and only
-            // the independent blockheight clock is left ticking. That
-            // reports "expired" ~60-90s later even when the mint actually
-            // landed in seconds, which is exactly the false failure users
-            // hit. confirmSignature() polls signature status directly.
-            await confirmSignature(connection, sig, lastValidBlockHeight);
+          const results = await Promise.allSettled(
+            signedTxs.map(async (stx) => {
+              const sig = await connection.sendRawTransaction(stx.serialize(), {
+                skipPreflight: false,
+                preflightCommitment: "confirmed",
+              });
+              // Not connection.confirmTransaction(): every strategy it
+              // offers races an onSignature WebSocket subscription, which
+              // never connects on this app's HTTP-only RPC proxy - so the
+              // REST fallback inside that same race never runs either,
+              // and only the independent blockheight clock is left
+              // ticking. That reports "expired" ~60-90s later even when
+              // the mint actually landed in seconds, which is exactly the
+              // false failure users hit. confirmSignature() polls
+              // signature status directly.
+              await confirmSignature(connection, sig, lastValidBlockHeight);
+              return sig;
+            })
+          );
+          const failed = results.filter((r) => r.status === "rejected");
+          if (failed.length === signedTxs.length) {
+            throw (failed[0] as PromiseRejectedResult).reason;
           }
+          failedCount += failed.length;
         };
 
         if (signAllTransactions && txs.length > 1) {
@@ -234,14 +264,22 @@ export default function Mint() {
         }
       }
 
+      // Report what actually landed. With one piece per transaction a
+      // partial result is a real outcome, not an edge case, and telling
+      // someone "minted 25" when two failed is the kind of lie they find
+      // out about from their wallet balance.
+      const ok = count - failedCount;
       const minted = pieces.map((p) => p.address);
       const mintedNames = pieces.map((p) => p.name);
       setLastMinted(minted);
       setLastMintedNames(mintedNames);
       toast(
-        count === 1
-          ? `Minted! ${mintedNames[0]}`
-          : `Minted ${count} pieces`
+        failedCount > 0
+          ? `Minted ${ok} of ${count} — ${failedCount} failed, try again`
+          : count === 1
+            ? `Minted! ${mintedNames[0]}`
+            : `Minted ${count} pieces`,
+        failedCount > 0
       );
       reroll();
       bump();
