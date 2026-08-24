@@ -31,6 +31,7 @@ import { PublicKey } from "@solana/web3.js";
 import {
   createMint,
   getMint,
+  getTransferFeeConfig,
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
@@ -168,6 +169,34 @@ describe("launch:setup", () => {
               `launching against this mint.`
           );
         }
+        // A Token-2022 transfer fee would silently break the books.
+        // Every transfer_checked delivers less than it sends, but the
+        // program records the amount it asked for: a staked balance
+        // the vault never actually received (unstake then tries to
+        // return more than is there), and a reward round credited at
+        // more $ANSEM than the vault holds (claims fail once the
+        // shortfall catches up). Burns are unaffected, so activation
+        // would still work while staking and rewards quietly rot.
+        // Neither is recoverable after launch, so refuse now.
+        const feeCfg = is2022 ? getTransferFeeConfig(info) : null;
+        const bps = feeCfg?.newerTransferFee.transferFeeBasisPoints ?? 0;
+        if (feeCfg && bps > 0) {
+          throw new Error(
+            `${label} mint ${mint.toBase58()} charges a ${bps} bps Token-2022 ` +
+              `transfer fee. This protocol's staking and reward accounting ` +
+              `assume the amount sent equals the amount received, so it ` +
+              `cannot be launched against a fee-bearing mint without ` +
+              `reworking that accounting first.`
+          );
+        }
+        if (info.freezeAuthority) {
+          console.log(
+            `  WARNING: ${label} has a freeze authority ` +
+              `(${info.freezeAuthority.toBase58()}) - that key can freeze ` +
+              `holder accounts, blocking claims and unstakes.`
+          );
+        }
+
         detected.push(owner);
         console.log(
           `  ${label} verified: ${info.decimals} decimals, ` +
