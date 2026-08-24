@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/ansem_world_v4.json`.
  */
 export type AnsemWorldV4 = {
-  "address": "EkdJTwzMJGjPovsrwpMSeHzRcDQ98JXUvs6AwPLjwg8t",
+  "address": "8877byAeJpCUWQhBWXQ5YrBPSrBa9761koygiFP1ijtP",
   "metadata": {
     "name": "ansemWorldV4",
     "version": "0.1.0",
