@@ -219,7 +219,7 @@ export default function MyStack() {
 
         <div className="notice" style={{ marginBottom: 20 }}>
           Wallet balance:{" "}
-          <b className="mono">{fmtToken(ansemBalance, 4)} $ANSEM</b>
+          <b className="mono">{fmtToken(ansemBalance)} $ANSEM</b>
           {" · "}
           already claimed into your wallet
           {totalLocked > 0 && (
@@ -227,7 +227,7 @@ export default function MyStack() {
               {" · "}
               Staked:{" "}
               <b className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {fmtToken(totalLocked, 2)}
+                {fmtToken(totalLocked)}
                 <img
                   src="/ansemw-icon.png"
                   alt="$ANSEMW"
@@ -259,7 +259,7 @@ export default function MyStack() {
             <div>
               <div className="label mono">IN YOUR VAULTS</div>
               <div className="val" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {fmtToken(banked, 4)}
+                {fmtToken(banked)}
                 <img
                   src="/ansem-icon.png"
                   alt="$ANSEM"
@@ -272,7 +272,7 @@ export default function MyStack() {
           <div className="stat-card">
             <div>
               <div className="label mono">LIFETIME EARNED</div>
-              <div className="val">{fmtToken(earned, 4)}</div>
+              <div className="val">{fmtToken(earned)}</div>
             </div>
             <div className="desc">
               Everything these pieces ever earned, including under previous

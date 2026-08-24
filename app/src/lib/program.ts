@@ -181,11 +181,29 @@ export const DECIMALS = 6;
 /** Must match `PRECISION` in the on-chain program (`state.rs`). */
 export const REWARD_PRECISION = 1_000_000_000_000n;
 export const toUi = (raw: number) => raw / 10 ** DECIMALS;
-export const fmtToken = (raw: number, digits = 4) =>
-  toUi(raw).toLocaleString("en-US", {
+/**
+ * A token amount, with the precision the size of the number deserves.
+ *
+ * Four decimals on everything read as noise where it mattered most: a
+ * vault holding 18,677.0428 $ANSEM is 18,677, and the fraction only made
+ * the figure harder to scan. But dropping decimals outright would round
+ * dust to "0" and make a real balance look empty, so the scale decides:
+ *
+ *   >= 1,000  whole numbers      18,677
+ *   >= 1      two decimals       12.35
+ *   < 1       four decimals      0.0428
+ *
+ * `digits` still overrides it where a caller has a reason.
+ */
+export const fmtToken = (raw: number, digits?: number) => {
+  const n = toUi(raw);
+  const abs = Math.abs(n);
+  const d = digits ?? (abs >= 1000 ? 0 : abs >= 1 ? 2 : 4);
+  return n.toLocaleString("en-US", {
     minimumFractionDigits: 0,
-    maximumFractionDigits: digits,
+    maximumFractionDigits: d,
   });
+};
 
 /**
  * Vault balance as the UI should show it: settled vault + pending

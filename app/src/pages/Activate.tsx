@@ -154,7 +154,7 @@ export default function Activate() {
         <div className="notice">
           Your balance:{" "}
           <b className="mono" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {fmtToken(ansemwBalance, 2)}
+            {fmtToken(ansemwBalance)}
             <img
               src="/ansemw-icon.png"
               alt="$ANSEMW"

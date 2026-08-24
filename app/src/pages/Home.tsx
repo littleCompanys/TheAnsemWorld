@@ -101,7 +101,7 @@ export default function Home() {
               <div className="stat-chip">
                 paid to holders{" "}
                 <b className="mono">
-                  {stats ? fmtToken(stats.totalClaimed, 2) : "—"}
+                  {stats ? fmtToken(stats.totalClaimed) : "—"}
                 </b>
               </div>
             </div>
@@ -264,7 +264,7 @@ export default function Home() {
                   alt="$ANSEM"
                   style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover" }}
                 />
-                {stats ? fmtToken(stats.totalClaimed, 2) : "—"}
+                {stats ? fmtToken(stats.totalClaimed) : "—"}
                 {/* Absent until the price lands - an unpriced total would
                     read as $0.00, which looks like a real answer. */}
                 {paidUsd && <span className="big-num-usd">{paidUsd}</span>}
@@ -272,7 +272,7 @@ export default function Home() {
               <div className="note">
                 $ANSEM claimed out of pieces into wallets. Another{" "}
                 <b className="mono" style={{ color: "var(--green)" }}>
-                  {stats ? fmtToken(stats.totalAllocated - stats.totalClaimed, 2) : "—"}
+                  {stats ? fmtToken(stats.totalAllocated - stats.totalClaimed) : "—"}
                 </b>{" "}
                 has been allocated on-chain and is still sitting in NFT vaults or
                 pending settle.
@@ -346,7 +346,7 @@ export default function Home() {
                 <div>
                   <div className="label mono">TOTAL ALLOCATED</div>
                   <div className="val">
-                    {stats ? fmtToken(stats.totalAllocated, 2) : "—"}
+                    {stats ? fmtToken(stats.totalAllocated) : "—"}
                   </div>
                 </div>
                 <div className="desc">
@@ -358,7 +358,7 @@ export default function Home() {
                 <div>
                   <div className="label mono">REWARD VAULT</div>
                   <div className="val">
-                    {stats ? fmtToken(stats.vaultBalance, 2) : "—"}
+                    {stats ? fmtToken(stats.vaultBalance) : "—"}
                   </div>
                 </div>
                 <div className="desc">
