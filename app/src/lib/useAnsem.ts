@@ -35,16 +35,25 @@ export const useProvider = () => {
   }, [connection, wallet]);
 };
 
-/** Read-only program handle; works without a connected wallet. */
+/**
+ * Read-only program handle.
+ *
+ * Deliberately built on a dummy wallet even when a real one is
+ * connected, so its identity depends on the connection alone. Reads do
+ * not care who is asking, and memoising on the wallet made every hook
+ * keyed to this handle re-run each time the adapter changed state while
+ * connecting - useProtocol was measured running four times on a single
+ * page load, at roughly six RPC calls each.
+ *
+ * Writes never come through here; they build their own provider via
+ * useProvider(), which does require a real wallet.
+ */
 export const useProgram = (): AnsemProgram | null => {
   const { connection } = useConnection();
-  const wallet = useAnchorWallet();
   return useMemo(() => {
     const provider = new AnchorProvider(
       connection,
-      // A dummy wallet is enough for reads. Writes go through
-      // useProvider(), which requires a real one.
-      wallet ?? ({ publicKey: PublicKey.default } as any),
+      { publicKey: PublicKey.default } as any,
       { commitment: "processed", preflightCommitment: "processed" }
     );
     try {
@@ -52,7 +61,7 @@ export const useProgram = (): AnsemProgram | null => {
     } catch {
       return null;
     }
-  }, [connection, wallet]);
+  }, [connection]);
 };
 
 export type ProtocolStats = {
@@ -62,12 +71,13 @@ export type ProtocolStats = {
   totalAllocated: number;
   totalClaimed: number;
   vaultBalance: number;
-  positionCount: number;
-  activeCount: number;
+  /** Null unless the caller asked for the position scan - see below. */
+  positionCount: number | null;
+  activeCount: number | null;
   /** Sum of cumulative $ANSEMW burned across every position. */
-  totalAnsemwBurned: number;
+  totalAnsemwBurned: number | null;
   /** NFTs destroyed by fuse (= sum of absorbed_count). */
-  nftsBurned: number;
+  nftsBurned: number | null;
   /**
    * Which token program owns each mint. Read from the mint accounts
    * rather than assumed: $ANSEM on mainnet is Token-2022, and the two
@@ -80,7 +90,21 @@ export type ProtocolStats = {
   initialized: boolean;
 };
 
-export const useProtocol = (refreshKey = 0) => {
+/**
+ * Protocol-wide state.
+ *
+ * `withPositions` gates a scan of every Position account, which is the
+ * only expensive call here and the only source of the four collection
+ * counters. Seven of the nine pages using this hook need none of them -
+ * they want the config and the token programs - and were downloading
+ * the whole collection to ignore it. Harmless at seven pieces, roughly
+ * 830KB per page load at 3,333, on every visit.
+ *
+ * The counters read null when the scan was skipped, rather than zero:
+ * a page that starts needing them should fail visibly instead of
+ * quietly rendering an empty collection.
+ */
+export const useProtocol = (refreshKey = 0, withPositions = false) => {
   const program = useProgram();
   const { connection } = useConnection();
   const [stats, setStats] = useState<ProtocolStats | null>(null);
@@ -120,10 +144,10 @@ export const useProtocol = (refreshKey = 0) => {
               totalAllocated: 0,
               totalClaimed: 0,
               vaultBalance: 0,
-              positionCount: 0,
-              activeCount: 0,
-              totalAnsemwBurned: 0,
-              nftsBurned: 0,
+              positionCount: null,
+              activeCount: null,
+              totalAnsemwBurned: null,
+              nftsBurned: null,
               ansemTokenProgram: TOKEN_PROGRAM_ID,
               ansemwTokenProgram: TOKEN_PROGRAM_ID,
               initialized: false,
@@ -145,28 +169,29 @@ export const useProtocol = (refreshKey = 0) => {
         const ansemTokenProgram = ansemMintAcct?.owner ?? TOKEN_PROGRAM_ID;
         const ansemwTokenProgram = ansemwMintAcct?.owner ?? TOKEN_PROGRAM_ID;
 
-        const positions = await program.account.position.all();
-        let vaultBalance = 0;
-        try {
-          const v = await getAccount(
-            connection,
-            rewardVaultPda(),
-            undefined,
-            ansemTokenProgram
-          );
-          vaultBalance = Number(v.amount);
-        } catch {
-          /* vault may not exist yet */
-        }
+        // The collection scan, and the vault balance, in parallel -
+        // neither depends on the other, and the scan is by far the
+        // slower of the two once the collection fills up.
+        const [positions, vaultBalance] = await Promise.all([
+          withPositions ? program.account.position.all() : null,
+          getAccount(connection, rewardVaultPda(), undefined, ansemTokenProgram)
+            .then((v) => Number(v.amount))
+            .catch(() => 0), // vault may not exist yet
+        ]);
 
-        let totalAnsemwBurned = 0;
-        let nftsBurned = 0;
-        let activeCount = 0;
-        for (const p of positions) {
-          const raw = p.account as any;
-          totalAnsemwBurned += Number(raw.cumulativeAnsemwBurned ?? 0);
-          nftsBurned += Number(raw.absorbedCount ?? 0);
-          if (raw.active) activeCount += 1;
+        let totalAnsemwBurned: number | null = null;
+        let nftsBurned: number | null = null;
+        let activeCount: number | null = null;
+        if (positions) {
+          totalAnsemwBurned = 0;
+          nftsBurned = 0;
+          activeCount = 0;
+          for (const p of positions) {
+            const raw = p.account as any;
+            totalAnsemwBurned += Number(raw.cumulativeAnsemwBurned ?? 0);
+            nftsBurned += Number(raw.absorbedCount ?? 0);
+            if (raw.active) activeCount += 1;
+          }
         }
 
         if (cancelled) return;
@@ -178,7 +203,7 @@ export const useProtocol = (refreshKey = 0) => {
           totalAllocated: (rsRaw as any).totalAllocated.toNumber(),
           totalClaimed: (rsRaw as any).totalClaimed.toNumber(),
           vaultBalance,
-          positionCount: positions.length,
+          positionCount: positions ? positions.length : null,
           activeCount,
           totalAnsemwBurned,
           nftsBurned,
@@ -205,7 +230,8 @@ export const useProtocol = (refreshKey = 0) => {
       } finally {
         if (!cancelled) setLoading(false);
         console.log(
-          `[read:useProtocol] ${Math.round(performance.now() - t0)}ms`
+          `[read:useProtocol] ${Math.round(performance.now() - t0)}ms` +
+            `${withPositions ? " (+position scan)" : ""}`
         );
       }
     };
@@ -214,7 +240,7 @@ export const useProtocol = (refreshKey = 0) => {
     return () => {
       cancelled = true;
     };
-  }, [program, connection, refreshKey]);
+  }, [program, connection, refreshKey, withPositions]);
 
   return { stats, loading, fetchError };
 };
@@ -260,11 +286,29 @@ const dasOwnedAssets = async (
         params: { ownerAddress: owner.toBase58(), page, limit },
       }),
     });
-    if (!res.ok) return null;
+    // Two very different reasons this can fail, and only one of them
+    // should reach for the fallback.
+    //
+    // "Method not found" means the RPC has no DAS index - a plain
+    // validator - and the fallback is the only way to answer at all.
+    //
+    // A 429 or a 5xx means the RPC is overloaded, and falling back would
+    // answer overload by sending a *heavier* query. On launch day, with
+    // everyone loading at once, that turns a slow page into a slower one
+    // and pushes the RPC further under. Fail fast and let the page say
+    // so; a visible error beats a self-inflicted stampede.
+    if (!res.ok) {
+      throw new Error(`DAS request failed: HTTP ${res.status}`);
+    }
     const json = await res.json();
-    // A plain validator answers "method not found" - not an outage, just
-    // an RPC without the index. Say so with null and let gPA handle it.
-    if (json.error) return null;
+    if (json.error) {
+      const code = json.error?.code;
+      const msg = String(json.error?.message ?? "");
+      const unsupported =
+        code === -32601 || /method not found|unsupported/i.test(msg);
+      if (unsupported) return null;
+      throw new Error(`DAS error: ${msg || code}`);
+    }
 
     const items: any[] = json.result?.items ?? [];
     for (const it of items) {
@@ -324,22 +368,39 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
       );
 
       if (found === null) {
-        via = "gpa";
-        const accounts = await connection.getProgramAccounts(
-          MPL_CORE_PROGRAM_ID,
-          {
-            filters: [
-              { memcmp: { offset: 1, bytes: publicKey.toBase58() } },
-              { memcmp: { offset: 33, bytes: "3" } }, // base58 of [2] = Collection
-              { memcmp: { offset: 34, bytes: collection.toBase58() } },
-            ],
-          }
-        );
-        found = accounts.map((a) => ({
-          id: a.pubkey.toBase58(),
-          name: readAssetName(a.account.data),
-          uri: readAssetUri(a.account.data),
-        }));
+        via = "scan";
+        // No DAS on this RPC. Scan *our* program instead of Core's:
+        // ours holds one Position per piece and nothing else, so the
+        // walk is bounded by the collection (3,333) rather than by
+        // every Core asset in existence.
+        //
+        // Ownership is not in the Position, and deliberately so - a
+        // stored owner would go stale the moment someone transferred,
+        // and this program cannot observe transfers. So the pieces come
+        // from us and the owners come from Core, read in batches.
+        const positions = await program.account.position.all();
+        const assetKeys = positions.map((p) => (p.account as any).asset as PublicKey);
+
+        const owned: { id: string; name: string; uri: string }[] = [];
+        for (let i = 0; i < assetKeys.length; i += 100) {
+          const slice = assetKeys.slice(i, i + 100);
+          const infos = await connection.getMultipleAccountsInfo(slice);
+          infos.forEach((info, j) => {
+            if (!info || !info.owner.equals(MPL_CORE_PROGRAM_ID)) return;
+            // owner sits at [1..33]; collection at [34..66] when the
+            // update authority variant at [33] says Collection.
+            const d = info.data;
+            if (new PublicKey(d.subarray(1, 33)).toBase58() !== publicKey.toBase58()) return;
+            if (d[33] !== 2) return;
+            if (new PublicKey(d.subarray(34, 66)).toBase58() !== collection.toBase58()) return;
+            owned.push({
+              id: slice[j].toBase58(),
+              name: readAssetName(d),
+              uri: readAssetUri(d),
+            });
+          });
+        }
+        found = owned;
       }
 
       tFind = performance.now();
