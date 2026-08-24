@@ -223,7 +223,7 @@ describe("launch:setup", () => {
         ? new PublicKey(process.env.ANSEMW_MINT)
         : await createMint(
             provider.connection, payer, me, null, 6,
-            undefined, undefined, TOKEN_2022_PROGRAM_ID
+            undefined, undefined, TOKEN_PROGRAM_ID
           );
       // Supplied mints may use either program, so read rather than assume.
       ansemTokenProgram =
@@ -249,13 +249,28 @@ describe("launch:setup", () => {
       // carry real metadata (or, on mainnet, belong to pump.fun, which
       // this branch never runs for anyway), and this identity's mint
       // authority wouldn't be able to write to it either way.
+      // mpl-token-metadata only writes Metadata accounts for classic SPL
+      // mints; a Token-2022 mint carries its own metadata extension and
+      // rejects this instruction. Purely cosmetic on a throwaway, so skip
+      // rather than fail the rehearsal over it.
+      const attachIfClassic = async (
+        label: string, mint: PublicKey, program: PublicKey,
+        name: string, symbol: string, uri: string
+      ) => {
+        if (!program.equals(TOKEN_PROGRAM_ID)) {
+          console.log(`  ${label} metadata skipped (Token-2022 test mint)`);
+          return;
+        }
+        await attachTokenMetadata(umi, mint, name, symbol, uri);
+        console.log(`  ${label} metadata attached (test)`);
+      };
       if (ansemIsThrowaway) {
-        await attachTokenMetadata(umi, ansemMint, "Ansem (test)", "ANSEM", "https://example.com/ansem.json");
-        console.log("  $ANSEM  metadata attached (test)");
+        await attachIfClassic("$ANSEM ", ansemMint, ansemTokenProgram,
+          "Ansem (test)", "ANSEM", "https://example.com/ansem.json");
       }
       if (ansemwIsThrowaway) {
-        await attachTokenMetadata(umi, ansemwMint, "Ansem World (test)", "ANSEMW", "https://example.com/ansemw.json");
-        console.log("  $ANSEMW metadata attached (test)");
+        await attachIfClassic("$ANSEMW", ansemwMint, ansemwTokenProgram,
+          "Ansem World (test)", "ANSEMW", "https://example.com/ansemw.json");
       }
     }
 

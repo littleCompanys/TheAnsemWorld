@@ -21,6 +21,8 @@ import {
   createAssociatedTokenAccount,
   getAssociatedTokenAddressSync,
   mintTo,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 import { AnsemWorldV4 } from "../target/types/ansem_world_v4";
 import {
@@ -106,17 +108,22 @@ describe("seed", () => {
         [Buffer.from("treasury")], program.programId
       );
       const collection = await createCollection(umi, treasuryPda);
+      // Mirrors production: the real $ANSEM is Token-2022, while the
+      // launchpad that mints $ANSEMW issues classic SPL Token.
       const ansemMint = await createMint(
-        provider.connection, payer, provider.wallet.publicKey, null, 6
+        provider.connection, payer, provider.wallet.publicKey, null, 6,
+        undefined, undefined, TOKEN_2022_PROGRAM_ID
       );
       const ansemwMint = await createMint(
-        provider.connection, payer, provider.wallet.publicKey, null, 6
+        provider.connection, payer, provider.wallet.publicKey, null, 6,
+        undefined, undefined, TOKEN_PROGRAM_ID
       );
       // Same reason as launch-setup.ts: a bare SPL mint has no
       // name/symbol/image, so wallets show it as generic "SPL Token".
       // These are always test throwaways here - seed.ts has no mainnet
       // branch - so attaching metadata is safe unconditionally.
-      await attachTokenMetadata(umi, ansemMint, "Ansem (test)", "ANSEM", "https://example.com/ansem.json");
+      // Skipped for $ANSEM: Token-2022 mints carry their own metadata
+      // extension and reject mpl-token-metadata's instruction.
       await attachTokenMetadata(umi, ansemwMint, "Ansem World (test)", "ANSEMW", "https://example.com/ansemw.json");
       console.log("  token metadata attached (test)");
       await program.methods
@@ -134,29 +141,33 @@ describe("seed", () => {
           authority: provider.wallet.publicKey,
           ansemMint,
           ansemwMint,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
         })
         .rpc();
       console.log("  protocol initialized");
     }
 
     const cfg = await program.account.globalConfig.fetch(configPda);
+
+    // Each mint's owning token program, read from chain rather than
+    // assumed: production runs $ANSEM on Token-2022 and $ANSEMW on the
+    // classic program, and every instruction needs the matching one.
+    const ansemTokenProgram =
+      (await provider.connection.getAccountInfo(cfg.ansemMint as PublicKey))!.owner;
+    const ansemwTokenProgram =
+      (await provider.connection.getAccountInfo(cfg.ansemwMint as PublicKey))!.owner;
     const liveCollection = cfg.coreCollection as PublicKey;
 
     // Demo/dev only: free $ANSEMW so activate/upgrade/stake are testable
     // without pump.fun. Virgin launch leaves wallets at 0.
-    const targetAnsemw = await createAssociatedTokenAccount(
-      provider.connection, payer, cfg.ansemwMint, target
-    ).catch(() => getAssociatedTokenAddressSync(cfg.ansemwMint, target));
+    const targetAnsemw = await createAssociatedTokenAccount(provider.connection, payer, cfg.ansemwMint, target, undefined, ansemwTokenProgram).catch(() => getAssociatedTokenAddressSync(cfg.ansemwMint, target, undefined, ansemwTokenProgram));
     if (SEED_DEMO) {
       // 1,000,000 whole $ANSEMW (atomic units = whole * 10^decimals).
       // Activation alone costs 25,000; fusing costs up to 100,000 more -
       // this needs to comfortably cover activate + upgrade + fuse for a
       // handful of demo pieces, not just one activation.
       const topUpWhole = 1_000_000;
-      await mintTo(
-        provider.connection, payer, cfg.ansemwMint, targetAnsemw,
-        provider.wallet.publicKey, topUpWhole * 10 ** 6
-      );
+      await mintTo(provider.connection, payer, cfg.ansemwMint, targetAnsemw, provider.wallet.publicKey, topUpWhole * 10 ** 6, undefined, undefined, ansemwTokenProgram);
       console.log(`  topped up ${topUpWhole.toLocaleString("en-US")} $ANSEMW for testing`);
     }
 
@@ -244,7 +255,7 @@ describe("seed", () => {
     if (!(await provider.connection.getAccountInfo(stakeVaultPda))) {
       await program.methods
         .initializeStakeVault()
-        .accounts({ payer: provider.wallet.publicKey, ansemwMint: cfg.ansemwMint })
+        .accounts({ payer: provider.wallet.publicKey, ansemwMint: cfg.ansemwMint, tokenProgram: ansemwTokenProgram })
         .rpc();
       console.log("  stake vault created");
     }
@@ -278,21 +289,17 @@ describe("seed", () => {
           asset: assets[0],
           ansemwMint: cfg.ansemwMint,
           ownerAnsemw: targetAnsemw,
+          tokenProgram: ansemwTokenProgram,
         })
         .rpc();
 
-      const funder = await createAssociatedTokenAccount(
-        provider.connection, payer, cfg.ansemMint, provider.wallet.publicKey
-      ).catch(() =>
-        getAssociatedTokenAddressSync(cfg.ansemMint, provider.wallet.publicKey)
+      const funder = await createAssociatedTokenAccount(provider.connection, payer, cfg.ansemMint, provider.wallet.publicKey, undefined, ansemTokenProgram).catch(() =>
+        getAssociatedTokenAddressSync(cfg.ansemMint, provider.wallet.publicKey, undefined, ansemTokenProgram)
       );
-      await mintTo(
-        provider.connection, payer, cfg.ansemMint, funder,
-        provider.wallet.publicKey, 1_000_000_000
-      );
+      await mintTo(provider.connection, payer, cfg.ansemMint, funder, provider.wallet.publicKey, 1_000_000_000, undefined, undefined, ansemTokenProgram);
       await program.methods
         .fundRewards(new anchor.BN(50_000_000))
-        .accounts({ funder: provider.wallet.publicKey, funderAnsem: funder })
+        .accounts({ funder: provider.wallet.publicKey, funderAnsem: funder, tokenProgram: ansemTokenProgram })
         .rpc();
       console.log("  activated one piece and funded a reward round");
     } else if (SEED_DEMO && assets.length > 0) {

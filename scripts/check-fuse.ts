@@ -30,6 +30,10 @@ describe("fuse feed", () => {
       [Buffer.from("fuse_feed")], program.programId
     );
     const cfg = await program.account.globalConfig.fetch(configPda);
+    // $ANSEMW's owning token program, read rather than assumed.
+    const ansemwTokenProgram = (await provider.connection.getAccountInfo(
+      cfg.ansemwMint as PublicKey
+    ))!.owner;
 
     // Every position this wallet can still fuse into.
     const positions = await program.account.position.all();
@@ -56,7 +60,10 @@ describe("fuse feed", () => {
         absorbedAsset: absorbed,
         collection: cfg.coreCollection,
         ansemwMint: cfg.ansemwMint,
-        ownerAnsemw: getAssociatedTokenAddressSync(cfg.ansemwMint, me),
+        ownerAnsemw: getAssociatedTokenAddressSync(
+          cfg.ansemwMint, me, false, ansemwTokenProgram
+        ),
+        tokenProgram: ansemwTokenProgram,
       })
       .rpc();
 
