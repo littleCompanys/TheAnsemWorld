@@ -156,12 +156,6 @@ export default function Home() {
             <div className="frame">
               <Carousel imgClassName="hero-art" alt="The Ansem World" />
             </div>
-            <div className="horn-ring">
-              <div className="ring-label">
-                in reward vault
-                <b>{stats ? fmtToken(stats.vaultBalance, 2) : "—"}</b>
-              </div>
-            </div>
           </div>
         </div>
       </header>
