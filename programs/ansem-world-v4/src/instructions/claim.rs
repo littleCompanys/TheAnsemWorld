@@ -10,6 +10,11 @@ use crate::{
     state::{GlobalConfig, Position, RewardState, REWARD_VAULT_SEED},
 };
 
+/// Every account is boxed. The state structs carry reserved padding
+/// for future fields, and deserialising them onto Solana's 4KB stack
+/// overflows it - the same constraint fuse() hit first. Boxing moves
+/// them to the heap; without it the failure is a runtime access
+/// violation, not a compile error.
 #[derive(Accounts)]
 pub struct Claim<'info> {
     /// Must be the wallet that currently holds the NFT.
@@ -20,7 +25,7 @@ pub struct Claim<'info> {
         bump = config.bump,
         has_one = ansem_mint @ AnsemError::InvalidMint
     )]
-    pub config: Account<'info, GlobalConfig>,
+    pub config: Box<Account<'info, GlobalConfig>>,
 
     /// CHECK: Validated in the handler. Because the vault belongs
     /// to the NFT, this check is what stands between a stranger and
@@ -34,27 +39,27 @@ pub struct Claim<'info> {
         bump = position.bump,
         constraint = position.asset == asset.key() @ AnsemError::NotAssetOwner
     )]
-    pub position: Account<'info, Position>,
+    pub position: Box<Account<'info, Position>>,
 
     #[account(
         mut,
         seeds = [RewardState::SEED],
         bump = reward_state.bump
     )]
-    pub reward_state: Account<'info, RewardState>,
+    pub reward_state: Box<Account<'info, RewardState>>,
 
     #[account(
         mut,
         seeds = [REWARD_VAULT_SEED],
         bump = config.reward_vault_bump
     )]
-    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
+    pub reward_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Needed by transfer_checked (which Token-2022 requires in place
     /// of the bare transfer). Pinned to the configured mint by the
     /// has_one on `config` above, which also lets Anchor's client
     /// resolve it automatically.
-    pub ansem_mint: InterfaceAccount<'info, Mint>,
+    pub ansem_mint: Box<InterfaceAccount<'info, Mint>>,
 
     /// Funds can only ever move to the caller's own account.
     #[account(
@@ -62,7 +67,7 @@ pub struct Claim<'info> {
         constraint = owner_ansem.owner == owner.key() @ AnsemError::NotAssetOwner,
         constraint = owner_ansem.mint == config.ansem_mint @ AnsemError::InvalidMint
     )]
-    pub owner_ansem: InterfaceAccount<'info, TokenAccount>,
+    pub owner_ansem: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program: Interface<'info, TokenInterface>,
 }

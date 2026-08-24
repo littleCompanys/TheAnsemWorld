@@ -21,6 +21,8 @@ import {
   createCollection,
   mintAsset,
   transferAsset,
+  burnAsset,
+  readAssetMetadata,
 } from "./core-helpers";
 
 // Production is MIXED, and this suite mirrors it exactly: the real
@@ -30,6 +32,10 @@ import {
 // must be handed the program that owns the mint it touches - and a
 // mismatch there can only surface when the two actually differ, which
 // is precisely this configuration.
+/// Trailing slash on purpose: the program concatenates, so piece N is
+/// `${TEST_BASE_URI}${N}.json`.
+const TEST_BASE_URI = "https://example.com/meta/";
+
 const ANSEM_TOKEN = TOKEN_2022_PROGRAM_ID;
 const ANSEMW_TOKEN = TOKEN_PROGRAM_ID;
 
@@ -99,6 +105,32 @@ describe("ansem-world-v4", () => {
   /// FUSE_COSTS) and the on-chain config are written. It's scaled to
   /// atomic units for the mint, the same way the program scales costs
   /// before each burn CPI.
+  const airdrop = async (to: PublicKey, sol: number) => {
+    const sig = await provider.connection.requestAirdrop(
+      to,
+      sol * anchor.web3.LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(sig, "processed");
+  };
+
+  const fetchCoreAsset = (asset: PublicKey) => readAssetMetadata(umi, asset);
+
+  /// The suite asserts failures by catching, so that the *reason* is
+  /// checked rather than just "something threw" - a test that passes on
+  /// the wrong error is worse than no test.
+  const mustFail = async (call: Promise<unknown>, contains: string) => {
+    try {
+      await call;
+      assert.fail(`expected this to fail with ${contains}`);
+    } catch (err: any) {
+      assert.include(
+        err.toString(),
+        contains,
+        `failed, but not with ${contains}. Actual: ${err.toString()}`
+      );
+    }
+  };
+
   const makeHolder = async (ansemwAmount = ACTIVATION_COST) => {
     const kp = Keypair.generate();
     const sig = await provider.connection.requestAirdrop(
@@ -190,6 +222,7 @@ describe("ansem-world-v4", () => {
         fuseCosts: bnArray(FUSE_COSTS),
         mintPrice: new anchor.BN(100_000_000), // 0.1 SOL
         maxSupply: 10_000,
+        baseUri: TEST_BASE_URI,
       })
       .accounts({
         authority: provider.wallet.publicKey,
@@ -207,6 +240,14 @@ describe("ansem-world-v4", () => {
     await program.methods
       .initializeFuseFeed()
       .accounts({ payer: provider.wallet.publicKey })
+      .rpc();
+
+    // Same for the vault that holds locked $ANSEMW - stake() transfers
+    // into it, so it cannot be created lazily on first use.
+    await program.methods
+      .initializeStakeVault()
+      .accounts({ payer: provider.wallet.publicKey, ansemwMint })
+      .accountsPartial({ tokenProgram: ANSEMW_TOKEN })
       .rpc();
 
     funderAnsem = await createAssociatedTokenAccount(provider.connection, payer, ansemMint, provider.wallet.publicKey, undefined, ANSEM_TOKEN);
@@ -1269,6 +1310,425 @@ describe("ansem-world-v4", () => {
       } catch (err: any) {
         assert.include(err.toString(), "NotAssetOwner");
       }
+    });
+  });
+  describe("stake", () => {
+    // 100,000 $ANSEMW is the first Stackers rung: +5%.
+    const STAKE_AMOUNT = 100_000;
+
+    const stake = (
+      asset: PublicKey,
+      holder: Keypair,
+      ansemw: PublicKey,
+      whole: number
+    ) =>
+      program.methods
+        .stake(new anchor.BN(whole * ANSEMW_UNIT))
+        .accounts({
+          staker: holder.publicKey,
+          stakerAnsemw: ansemw,
+          ansemwMint,
+          asset,
+          tokenProgram: ANSEMW_TOKEN,
+        })
+        .signers([holder])
+        .rpc();
+
+    const unstake = (
+      asset: PublicKey,
+      holder: Keypair,
+      ansemw: PublicKey
+    ) =>
+      program.methods
+        .unstake()
+        .accounts({
+          staker: holder.publicKey,
+          owner: holder.publicKey,
+          stakerAnsemw: ansemw,
+          ansemwMint,
+          asset,
+          tokenProgram: ANSEMW_TOKEN,
+        })
+        .signers([holder])
+        .rpc();
+
+    it("raises the piece's weight and the pool by the same delta", async () => {
+      const { kp, assetKey, ansemw } = await makeHolder(
+        ACTIVATION_COST + STAKE_AMOUNT
+      );
+      await initPosition(assetKey);
+      await activate(assetKey, kp, ansemw);
+      const positionPda = positionPdaFor(assetKey);
+
+      const before = await program.account.position.fetch(positionPda);
+      const poolBefore = (
+        await program.account.rewardState.fetch(rewardStatePda)
+      ).totalWeight.toNumber();
+
+      await stake(assetKey, kp, ansemw, STAKE_AMOUNT);
+
+      const after = await program.account.position.fetch(positionPda);
+      const poolAfter = (
+        await program.account.rewardState.fetch(rewardStatePda)
+      ).totalWeight.toNumber();
+
+      assert.strictEqual(after.stakeBonusPct, 5, "first Stackers rung");
+      assert.strictEqual(
+        after.effectiveWeight.toNumber(),
+        Math.floor((before.effectiveWeight.toNumber() * 105) / 100)
+      );
+      assert.strictEqual(
+        poolAfter - poolBefore,
+        after.effectiveWeight.toNumber() - before.effectiveWeight.toNumber(),
+        "the pool moved by exactly what the piece moved"
+      );
+    });
+
+    it("returns the tokens and clears the bonus on a plain unstake", async () => {
+      const { kp, assetKey, ansemw } = await makeHolder(
+        ACTIVATION_COST + STAKE_AMOUNT
+      );
+      await initPosition(assetKey);
+      await activate(assetKey, kp, ansemw);
+      const positionPda = positionPdaFor(assetKey);
+
+      await stake(assetKey, kp, ansemw, STAKE_AMOUNT);
+      const boosted = await program.account.position.fetch(positionPda);
+      assert.strictEqual(boosted.stakeBonusPct, 5);
+
+      await unstake(assetKey, kp, ansemw);
+
+      const cleared = await program.account.position.fetch(positionPda);
+      assert.strictEqual(cleared.stakeBonusPct, 0, "bonus stripped");
+      const back = await getAccount(
+        provider.connection,
+        ansemw,
+        undefined,
+        ANSEMW_TOKEN
+      );
+      assert.strictEqual(
+        Number(back.amount),
+        STAKE_AMOUNT * ANSEMW_UNIT,
+        "every locked token came back"
+      );
+    });
+
+    // The regression this guards: a seller's StakeAccount outlives the
+    // sale, and unstake used to zero the piece's bonus unconditionally.
+    // Once the buyer had activated and staked their own $ANSEMW, the
+    // seller withdrawing their tokens wiped the buyer's bonus with them.
+    it("does not let a previous owner strip the new owner's stake bonus", async () => {
+      const seller = await makeHolder(ACTIVATION_COST + STAKE_AMOUNT);
+      const { kp, asset, assetKey, ansemw } = seller;
+      await initPosition(assetKey);
+      await activate(assetKey, kp, ansemw);
+      const positionPda = positionPdaFor(assetKey);
+
+      await stake(assetKey, kp, ansemw, STAKE_AMOUNT);
+      assert.strictEqual(
+        (await program.account.position.fetch(positionPda)).stakeBonusPct,
+        5
+      );
+
+      // A real sale, then the permissionless sync that puts the piece
+      // back to sleep and drops the seller's bonus.
+      const buyer = Keypair.generate();
+      const sig = await provider.connection.requestAirdrop(
+        buyer.publicKey,
+        3 * anchor.web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(sig, "processed");
+      await transferAsset(
+        umi,
+        asset,
+        collection,
+        umiSignerFor(umi, kp),
+        buyer.publicKey
+      );
+      await program.methods.syncOwner().accounts({ asset: assetKey }).rpc();
+
+      // The buyer activates and stakes their own tokens.
+      const buyerAnsemw = await createAssociatedTokenAccount(
+        provider.connection,
+        payer,
+        ansemwMint,
+        buyer.publicKey,
+        undefined,
+        ANSEMW_TOKEN
+      );
+      await mintTo(
+        provider.connection,
+        payer,
+        ansemwMint,
+        buyerAnsemw,
+        provider.wallet.publicKey,
+        (ACTIVATION_COST + STAKE_AMOUNT) * ANSEMW_UNIT,
+        undefined,
+        undefined,
+        ANSEMW_TOKEN
+      );
+      await activate(assetKey, buyer, buyerAnsemw);
+      await stake(assetKey, buyer, buyerAnsemw, STAKE_AMOUNT);
+
+      const buyersPiece = await program.account.position.fetch(positionPda);
+      assert.strictEqual(buyersPiece.stakeBonusPct, 5, "buyer's own bonus");
+      const poolBefore = (
+        await program.account.rewardState.fetch(rewardStatePda)
+      ).totalWeight.toNumber();
+
+      // The seller pulls their own tokens out. This must touch nothing
+      // but their own StakeAccount and their own token balance.
+      await unstake(assetKey, kp, ansemw);
+
+      const survived = await program.account.position.fetch(positionPda);
+      assert.strictEqual(
+        survived.stakeBonusPct,
+        5,
+        "the buyer's bonus survived the seller's withdrawal"
+      );
+      assert.strictEqual(
+        survived.effectiveWeight.toNumber(),
+        buyersPiece.effectiveWeight.toNumber(),
+        "the piece's weight is untouched"
+      );
+      assert.strictEqual(
+        (
+          await program.account.rewardState.fetch(rewardStatePda)
+        ).totalWeight.toNumber(),
+        poolBefore,
+        "the pool is untouched"
+      );
+
+      // And the seller genuinely got their tokens back.
+      const back = await getAccount(
+        provider.connection,
+        ansemw,
+        undefined,
+        ANSEMW_TOKEN
+      );
+      assert.strictEqual(
+        Number(back.amount),
+        STAKE_AMOUNT * ANSEMW_UNIT,
+        "the seller's own tokens came back in full"
+      );
+    });
+  });
+  describe("reap_burned", () => {
+    /// A holder can burn their own asset straight through Metaplex,
+    /// outside fuse. Nothing tells this program, so the position keeps
+    /// its weight in total_weight - the denominator of every reward
+    /// round - and dilutes everyone still holding, forever.
+    it("returns the weight a directly-burned piece left behind", async () => {
+      const { kp, assetKey, ansemw } = await makeHolder(ACTIVATION_COST);
+      await initPosition(assetKey);
+      await activate(assetKey, kp, ansemw);
+
+      const positionPda = positionPdaFor(assetKey);
+      const stranded = (
+        await program.account.position.fetch(positionPda)
+      ).effectiveWeight.toNumber();
+      const poolWithPiece = (
+        await program.account.rewardState.fetch(rewardStatePda)
+      ).totalWeight.toNumber();
+
+      // Burn it the way a wallet would - this program is not involved.
+      await burnAsset(
+        umi,
+        { publicKey: assetKey.toBase58() as any },
+        { publicKey: collection.publicKey },
+        umiSignerFor(umi, kp)
+      );
+
+      // The leak: the asset is gone, the weight is not.
+      const poolLeaking = (
+        await program.account.rewardState.fetch(rewardStatePda)
+      ).totalWeight.toNumber();
+      assert.strictEqual(
+        poolLeaking,
+        poolWithPiece,
+        "burning left the weight behind - this is the bug"
+      );
+
+      // And sync_owner cannot reach it. It reverts on an asset it can
+      // no longer read - MalformedCoreAsset rather than NotACoreAsset,
+      // because a freshly burned account still reads as Core-owned with
+      // its data truncated, and only later does the runtime hand it
+      // back to the System Program. Either error leaves the position
+      // unreachable through the normal path, which is the whole reason
+      // reap_burned has to exist.
+      await mustFail(
+        program.methods.syncOwner().accounts({ asset: assetKey }).rpc(),
+        "MalformedCoreAsset"
+      );
+
+      // reap_burned is the only way back.
+      await program.methods
+        .reapBurned()
+        .accounts({
+          asset: assetKey,
+          rentReceiver: provider.wallet.publicKey,
+        })
+        .rpc();
+
+      const poolAfter = (
+        await program.account.rewardState.fetch(rewardStatePda)
+      ).totalWeight.toNumber();
+      assert.strictEqual(
+        poolAfter,
+        poolWithPiece - stranded,
+        "the stranded weight is back out of the pool"
+      );
+      assert.isNull(
+        await program.account.position.fetchNullable(positionPda),
+        "the position is closed"
+      );
+    });
+
+    it("refuses to touch a piece that still exists", async () => {
+      const { kp, assetKey, ansemw } = await makeHolder(ACTIVATION_COST);
+      await initPosition(assetKey);
+      await activate(assetKey, kp, ansemw);
+
+      // Permissionless is only safe because this is impossible.
+      await mustFail(
+        program.methods
+          .reapBurned()
+          .accounts({
+            asset: assetKey,
+            rentReceiver: provider.wallet.publicKey,
+          })
+          .rpc(),
+        "AssetStillExists"
+      );
+    });
+  });
+
+  describe("activation cost ceiling", () => {
+    it("refuses a value that would overflow the burn", async () => {
+      const cfgBefore = await program.account.globalConfig.fetch(configPda);
+
+      await mustFail(
+        program.methods
+          .setActivationCost(new anchor.BN("18446744073709551615"))
+          .accounts({ authority: provider.wallet.publicKey })
+          .rpc(),
+        "ActivationCostTooHigh"
+      );
+
+      const cfgAfter = await program.account.globalConfig.fetch(configPda);
+      assert.strictEqual(
+        cfgAfter.activationCost.toString(),
+        cfgBefore.activationCost.toString(),
+        "the fee is unchanged"
+      );
+    });
+
+    it("still allows lowering it, which is the direction that matters", async () => {
+      const original = (await program.account.globalConfig.fetch(configPda))
+        .activationCost;
+
+      await program.methods
+        .setActivationCost(new anchor.BN(1_000))
+        .accounts({ authority: provider.wallet.publicKey })
+        .rpc();
+      assert.strictEqual(
+        (
+          await program.account.globalConfig.fetch(configPda)
+        ).activationCost.toNumber(),
+        1_000
+      );
+
+      await program.methods
+        .setActivationCost(original)
+        .accounts({ authority: provider.wallet.publicKey })
+        .rpc();
+    });
+  });
+  describe("derived metadata", () => {
+    // Runs last on purpose. mint_nft only works once the collection's
+    // update authority belongs to the config PDA - and the moment it
+    // does, umi can no longer mint, which every earlier test relies on.
+    before(async () => {
+      await program.methods
+        .claimCollectionAuthority()
+        .accounts({
+          authority: provider.wallet.publicKey,
+          collection: toWeb3(collection.publicKey),
+        })
+        .rpc();
+    });
+    /// The whole point of dropping the name/uri arguments: what a buyer
+    /// receives is decided by the counter, not by what they ask for.
+    /// Before this, the first person to read the frontend's asset list
+    /// could simply request the rarest piece - and since nothing in
+    /// this program can rewrite an asset's metadata once Core has
+    /// written it, that would have been permanent.
+    it("names and points each piece from the counter, not the caller", async () => {
+      const cfgBefore = await program.account.globalConfig.fetch(configPda);
+      const n = cfgBefore.currentSupply + 1;
+
+      const buyer = Keypair.generate();
+      await airdrop(buyer.publicKey, 2);
+      const asset = Keypair.generate();
+
+      await program.methods
+        .mintNft()
+        .accounts({
+          buyer: buyer.publicKey,
+          asset: asset.publicKey,
+          collection: toWeb3(collection.publicKey),
+          treasury: treasuryDestination,
+        })
+        .signers([buyer, asset])
+        .rpc();
+
+      const onChain = await fetchCoreAsset(asset.publicKey);
+      assert.strictEqual(onChain.name, `The Ansem World #${n}`);
+      assert.strictEqual(onChain.uri, `${TEST_BASE_URI}${n}.json`);
+    });
+
+    it("gives consecutive buyers consecutive pieces", async () => {
+      const start =
+        (await program.account.globalConfig.fetch(configPda)).currentSupply + 1;
+
+      const uris: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const buyer = Keypair.generate();
+        await airdrop(buyer.publicKey, 2);
+        const asset = Keypair.generate();
+        await program.methods
+          .mintNft()
+          .accounts({
+            buyer: buyer.publicKey,
+            asset: asset.publicKey,
+            collection: toWeb3(collection.publicKey),
+            treasury: treasuryDestination,
+          })
+          .signers([buyer, asset])
+          .rpc();
+        uris.push((await fetchCoreAsset(asset.publicKey)).uri);
+      }
+
+      assert.deepStrictEqual(uris, [
+        `${TEST_BASE_URI}${start}.json`,
+        `${TEST_BASE_URI}${start + 1}.json`,
+        `${TEST_BASE_URI}${start + 2}.json`,
+      ]);
+    });
+
+    it("freezes the base URI once a piece exists", async () => {
+      // Supply is well past zero by now, so the prefix is locked. The
+      // escape hatch only covers a typo caught before the first sale.
+      await mustFail(
+        program.methods
+          .setBaseUri("https://evil.example.com/")
+          .accounts({ authority: provider.wallet.publicKey })
+          .rpc(),
+        "BaseUriLocked"
+      );
+
+      const cfg = await program.account.globalConfig.fetch(configPda);
+      assert.strictEqual(cfg.baseUri, TEST_BASE_URI, "prefix unchanged");
     });
   });
 });

@@ -18,7 +18,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { AnsemWorldV4 } from "../target/types/ansem_world_v4";
 
 type Action =
@@ -221,10 +221,27 @@ describe(`admin:${action}`, () => {
             "  one piece is awake."
           );
         }
+        // Which token program owns $ANSEM decides both the ATA address
+        // and which program every token instruction must be handed. It
+        // is not fixed: $ANSEM on mainnet is Token-2022, so read it off
+        // the mint rather than defaulting to the classic program, the
+        // same way launch-setup.ts and the app's useAnsem.ts do.
+        const ansemMintAcct = await provider.connection.getAccountInfo(
+          cfg.ansemMint
+        );
+        if (!ansemMintAcct) {
+          throw new Error(
+            "the configured $ANSEM mint does not exist on this cluster - " +
+            "you are probably pointed at the wrong network."
+          );
+        }
+        const ansemTokenProgram = ansemMintAcct.owner ?? TOKEN_PROGRAM_ID;
+        const ata = getAssociatedTokenAddressSync(
+          cfg.ansemMint, me, false, ansemTokenProgram
+        );
         // Check the wallet actually holds the $ANSEM, so a shortfall reads
         // as a balance problem rather than the token program's opaque
         // "insufficient funds" (custom error 0x1).
-        const ata = getAssociatedTokenAddressSync(cfg.ansemMint, me);
         let held = 0;
         try {
           const bal = await provider.connection.getTokenAccountBalance(ata);
@@ -246,7 +263,8 @@ describe(`admin:${action}`, () => {
           .fundRewards(raw)
           .accounts({
             funder: me,
-            funderAnsem: getAssociatedTokenAddressSync(cfg.ansemMint, me),
+            funderAnsem: ata,
+            tokenProgram: ansemTokenProgram,
           })
           .rpc();
         await after(`funded ${amount.toLocaleString("en-US")} $ANSEM into the pool`);

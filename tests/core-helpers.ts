@@ -5,6 +5,8 @@ import {
   createV1,
   createCollection as createCollectionWithPlugins,
   transferV1,
+  burnV1,
+  fetchAssetV1,
   ruleSet,
   MPL_CORE_PROGRAM_ID,
 } from "@metaplex-foundation/mpl-core";
@@ -152,6 +154,32 @@ export const transferAsset = async (
     collection: collection.publicKey,
     authority: from,
     newOwner: umiPublicKey(to.toBase58()),
+  }).sendAndConfirm(umi, FAST);
+};
+
+/// Reads a Core asset's on-chain name and URI. The point of the
+/// derived-metadata tests is that these came from the program's own
+/// counter, so they have to be read back from Core rather than from
+/// anything the test passed in.
+export const readAssetMetadata = async (umi: Umi, asset: PublicKey) => {
+  const a = await fetchAssetV1(umi, umiPublicKey(asset.toBase58()));
+  return { name: a.name, uri: a.uri };
+};
+
+/// Burns a Core asset the way a holder's wallet would - straight
+/// through Metaplex, with this program never hearing about it. This is
+/// the path `reap_burned` exists to clean up after, so the test has to
+/// take it rather than going through `fuse`.
+export const burnAsset = async (
+  umi: Umi,
+  asset: { publicKey: any },
+  collection: { publicKey: any },
+  owner: Signer
+) => {
+  await burnV1(umi, {
+    asset: asset.publicKey,
+    collection: collection.publicKey,
+    authority: owner,
   }).sendAndConfirm(umi, FAST);
 };
 

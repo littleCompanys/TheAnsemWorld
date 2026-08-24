@@ -1,6 +1,9 @@
 use anchor_lang::prelude::*;
 
-use crate::{errors::AnsemError, state::GlobalConfig};
+use crate::{
+    errors::AnsemError,
+    state::{GlobalConfig, MAX_ACTIVATION_COST},
+};
 
 #[derive(Accounts)]
 pub struct AdminOnly<'info> {
@@ -50,7 +53,33 @@ pub fn transfer_authority(ctx: Context<AdminOnly>, new_authority: Pubkey) -> Res
 /// initialization, because an authority able to move them could
 /// dilute every holder's share.
 pub fn set_activation_cost(ctx: Context<AdminOnly>, cost: u64) -> Result<()> {
+    // Bounded on the way up only. Lowering it is the expected move as
+    // $ANSEMW deflates; raising it without limit would overflow
+    // `to_atomic` and brick `activate` for everyone, permanently.
+    require!(
+        cost <= MAX_ACTIVATION_COST,
+        AnsemError::ActivationCostTooHigh
+    );
     ctx.accounts.config.activation_cost = cost;
+    Ok(())
+}
+
+/// Fixes the metadata prefix - but only before the first piece exists.
+///
+/// A typo'd base URI would otherwise brick the whole collection with no
+/// way back, since nothing here can rewrite an asset's metadata after
+/// Core has written it. Once one piece has minted the prefix is frozen,
+/// so the authority can never redirect the art of pieces already sold.
+pub fn set_base_uri(ctx: Context<AdminOnly>, base_uri: String) -> Result<()> {
+    require!(
+        ctx.accounts.config.current_supply == 0,
+        AnsemError::BaseUriLocked
+    );
+    require!(
+        !base_uri.is_empty() && base_uri.len() <= 128,
+        AnsemError::InvalidBaseUri
+    );
+    ctx.accounts.config.base_uri = base_uri;
     Ok(())
 }
 

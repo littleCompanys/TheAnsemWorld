@@ -175,8 +175,9 @@ pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
 /// Returns the $ANSEMW locked against one piece and clears its bonus.
 /// No fee, no cooldown. Other pieces this wallet staked are untouched.
 ///
-/// If the piece was sold, its bonus is already zero (sync_owner cleared
-/// it), so the un-apply is a no-op and only the tokens come back.
+/// If the piece was sold, this wallet is no longer its activation owner
+/// and any bonus on it belongs to whoever holds it now, so only the
+/// tokens come back and the piece is left alone.
 #[derive(Accounts)]
 pub struct Unstake<'info> {
     #[account(mut)]
@@ -237,14 +238,27 @@ pub struct Unstake<'info> {
 pub fn unstake(ctx: Context<Unstake>) -> Result<()> {
     require!(ctx.accounts.stake_account.amount > 0, AnsemError::NotStaked);
 
-    // Strip the bonus from the piece before the tokens leave.
-    let config = (*ctx.accounts.config).clone();
-    set_bonus_on_position(
-        &mut ctx.accounts.position,
-        &mut ctx.accounts.reward_state,
-        &config,
-        0,
-    )?;
+    // Strip the bonus from the piece before the tokens leave - but only
+    // if this wallet's stake is what the piece is actually carrying.
+    //
+    // After a sale the piece can already be activated and staked by its
+    // new holder, while the seller's StakeAccount lives on untouched.
+    // Zeroing unconditionally would let that seller wipe the buyer's
+    // bonus by withdrawing their own tokens. `stake` only ever writes a
+    // bonus for the activation owner, so that field is the reliable
+    // answer to "whose stake is on this piece right now".
+    //
+    // When it is not this wallet's, there is nothing to un-apply and no
+    // weight changes, so the settle is skipped along with it.
+    if ctx.accounts.position.activation_owner == ctx.accounts.staker.key() {
+        let config = (*ctx.accounts.config).clone();
+        set_bonus_on_position(
+            &mut ctx.accounts.position,
+            &mut ctx.accounts.reward_state,
+            &config,
+            0,
+        )?;
+    }
 
     // Unlock everything for this piece.
     let amount = ctx.accounts.stake_account.amount;

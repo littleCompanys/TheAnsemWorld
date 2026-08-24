@@ -5,7 +5,10 @@ use anchor_lang::solana_program::{
     system_instruction,
 };
 
-use crate::{errors::AnsemError, state::{GlobalConfig, Position, RewardState}};
+use crate::{
+    errors::AnsemError,
+    state::{GlobalConfig, Position, RewardState, PIECE_NAME_PREFIX},
+};
 
 /// Mints one World Piece NFT into the caller's wallet and
 /// simultaneously creates the Position PDA for it.
@@ -19,11 +22,20 @@ use crate::{errors::AnsemError, state::{GlobalConfig, Position, RewardState}};
 /// any external keypair. This means the team cannot bypass the mint
 /// price — every NFT must go through this instruction.
 ///
-/// name and uri let the team pre-compute Arweave/IPFS hashes and
-/// pass the right metadata for each mint without storing a base URI
-/// on-chain (which would require all assets to share the same
-/// metadata structure). The team controls the frontend; wallets
-/// cannot mint directly without going through the site.
+/// The metadata is NOT an argument. Name and URI are derived from
+/// `config.base_uri` and the piece's mint index, so a buyer receives
+/// whatever the counter was standing at when their transaction landed.
+///
+/// This matters because the instruction is permissionless and always
+/// will be: anyone can build the transaction from the program id and
+/// the instruction name, with or without the published IDL. When the
+/// URI was a parameter, the first buyer who read the frontend's asset
+/// list could simply ask for the rarest piece - no exploit needed, and
+/// no way to undo it afterwards, since nothing in this program can
+/// rewrite an asset's metadata once Core has written it.
+///
+/// Deriving it also makes the mint order auditable: piece N is
+/// `{base_uri}N.json`, and the chain records who got which index.
 #[derive(Accounts)]
 pub struct MintNft<'info> {
     /// The buyer — pays mint_price SOL + Position rent.
@@ -84,7 +96,7 @@ pub struct MintNft<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<MintNft>, name: String, uri: String) -> Result<()> {
+pub fn handler(ctx: Context<MintNft>) -> Result<()> {
     require!(!ctx.accounts.config.paused, AnsemError::ProtocolPaused);
     require!(
         ctx.accounts.config.collection_claimed,
@@ -100,11 +112,22 @@ pub fn handler(ctx: Context<MintNft>, name: String, uri: String) -> Result<()> {
         );
     }
 
-    // Validate metadata fields are non-empty.
-    require!(!name.is_empty(), AnsemError::InvalidMintMetadata);
-    require!(!uri.is_empty(), AnsemError::InvalidMintMetadata);
-    require!(name.len() <= 64, AnsemError::InvalidMintMetadata);
-    require!(uri.len() <= 200, AnsemError::InvalidMintMetadata);
+    // Derive the metadata from the mint counter. `current_supply` is
+    // read and incremented inside this one instruction, and the runtime
+    // serialises writes to `config`, so two buyers can never land on the
+    // same index however they race each other.
+    //
+    // Numbering is 1-based to match the metadata files already
+    // generated (`.../1.json` is piece #1), so base_uri carries its own
+    // trailing separator and the two halves simply concatenate.
+    let number = ctx
+        .accounts
+        .config
+        .current_supply
+        .checked_add(1)
+        .ok_or(AnsemError::MathOverflow)?;
+    let name = format!("{} #{}", PIECE_NAME_PREFIX, number);
+    let uri = format!("{}{}.json", ctx.accounts.config.base_uri, number);
 
     // ── Collect mint fee ─────────────────────────────────────────────
     let price = ctx.accounts.config.mint_price;
@@ -217,7 +240,11 @@ pub fn handler(ctx: Context<MintNft>, name: String, uri: String) -> Result<()> {
     position.activation_owner = Pubkey::default();
     position.active = false;
     position.tier = 1;
-    position.base_weight = ctx.accounts.config.weight_for_tier(1).unwrap_or(0);
+    position.base_weight = ctx
+        .accounts
+        .config
+        .weight_for_tier(1)
+        .ok_or(AnsemError::InvalidTier)?;
     position.effective_weight = position.base_weight;
     // Anchor at current acc so this position cannot claim rewards
     // that accrued before it was minted.
@@ -229,6 +256,7 @@ pub fn handler(ctx: Context<MintNft>, name: String, uri: String) -> Result<()> {
     position.lifetime_earned = 0;
     position.stake_bonus_pct = 0;
     position.bump = ctx.bumps.position;
+    position.reserved = [0u8; 64];
 
     // ── Update supply counter ────────────────────────────────────────
     ctx.accounts.config.current_supply = ctx

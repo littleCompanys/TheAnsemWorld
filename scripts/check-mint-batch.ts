@@ -19,7 +19,6 @@ import appIdl from "../app/src/idl/ansem_world_v4.json";
 
 const QTY = 5;
 const TX_SIZE_LIMIT = 1100;
-const COLLECTION_NAME = "The Ansem World";
 
 describe("batch mint", () => {
   it("mints QTY pieces the way the Mint page does", async () => {
@@ -63,7 +62,7 @@ describe("batch mint", () => {
       const asset = Keypair.generate();
       const n = supplyCursor + 1 + i;
       const ix = await program.methods
-        .mintNft(`${COLLECTION_NAME} #${n}`, `http://localhost:5173/nft/1.json`)
+        .mintNft()
         .accounts({
           buyer: me,
           asset: asset.publicKey,

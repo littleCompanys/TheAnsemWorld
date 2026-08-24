@@ -45,6 +45,23 @@ pub fn current_owner(asset_info: &AccountInfo) -> Result<Pubkey> {
     ))
 }
 
+/// Whether this account is still a readable, living Core asset.
+///
+/// This is the same test every other instruction here applies before
+/// trusting an asset - Core owns it, and its bytes parse. Reusing it
+/// rather than inventing a separate "is it burned" heuristic is the
+/// point: if this returns false, no other instruction in the program
+/// can act on the asset either, so its position is unreachable.
+///
+/// A burn does not leave the obvious footprint you would expect. On a
+/// test validator the account survives the transaction still owned by
+/// Core, still funded, still holding bytes - what changes is that those
+/// bytes no longer deserialize. Checking ownership, emptiness or
+/// lamports would all have missed it.
+pub fn is_live(asset_info: &AccountInfo) -> bool {
+    load_asset(asset_info).is_ok()
+}
+
 /// Confirms the asset is part of our official collection, without
 /// caring who holds it.
 pub fn verify_collection(asset_info: &AccountInfo, expected_collection: &Pubkey) -> Result<()> {

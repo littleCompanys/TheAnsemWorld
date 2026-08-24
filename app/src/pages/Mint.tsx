@@ -14,10 +14,6 @@ import { useProtocol, useProvider } from "../lib/useAnsem";
 import { useRequireWallet } from "../lib/useRequireWallet";
 import { confirmSignature } from "../lib/confirmSignature";
 
-// ── Metadata ──────────────────────────────────────────────────────────
-const METADATA_BASE_URI =
-  import.meta.env.VITE_METADATA_BASE_URI ?? "https://arweave.net/placeholder";
-
 // Every mint_nft call handles exactly one piece - there is no on-chain
 // batch-mint instruction - so a bigger quantity means more transactions,
 // which means more sequential wallet approvals (see MINT_CHUNK_SIZE
@@ -139,13 +135,13 @@ export default function Mint() {
       for (let i = 0; i < count; i++) {
         const asset = Keypair.generate();
         const n = supplyCursor + 1 + i;
+        // Display only. The program derives both the name and the URI
+        // from its own counter, so this is a prediction of what the
+        // chain will assign, never an instruction to it - which is what
+        // stops anyone from asking for a particular piece.
         const name = `${COLLECTION_NAME} #${n}`;
-        // One metadata file per piece number - #5 always resolves to
-        // 5.json, matching the name above and the traits baked into it
-        // at generation time.
-        const uri = `${METADATA_BASE_URI}/${n}.json`;
         const ix = await program.methods
-          .mintNft(name, uri)
+          .mintNft()
           .accounts({
             buyer: publicKey,
             asset: asset.publicKey,
