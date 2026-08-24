@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { useConnection } from "@solana/wallet-adapter-react";
@@ -29,6 +29,16 @@ export default function MyStack() {
   const requireWallet = useRequireWallet();
   const [refresh, setRefresh] = useState(0);
   const bump = () => setRefresh((v) => v + 1);
+
+  // When the wallet adapter actually hands over a publicKey. Every
+  // per-wallet hook below is blocked until it does, so if the page feels
+  // slow before any request is even sent, this is where it went.
+  useEffect(() => {
+    console.log(
+      `[read:wallet] publicKey ${publicKey ? "ready" : "null"} at ` +
+        `${Math.round(performance.now())}ms since page load`
+    );
+  }, [publicKey]);
 
   const { stats, loading: protocolLoading, fetchError } = useProtocol(refresh);
   const cfg = stats?.config ?? null;

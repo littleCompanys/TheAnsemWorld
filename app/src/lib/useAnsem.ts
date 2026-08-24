@@ -100,6 +100,10 @@ export const useProtocol = (refreshKey = 0) => {
     const load = async (): Promise<void> => {
       if (!program) return;
       setLoading(true);
+      // Timed for the same reason rpcSafe times writes: a slow page is
+      // only fixable once you know which phase is slow, and none of this
+      // is measurable from outside the browser.
+      const t0 = performance.now();
       try {
         const [cfgRaw, rsRaw] = await Promise.all([
           program.account.globalConfig.fetchNullable(configPda()),
@@ -200,6 +204,9 @@ export const useProtocol = (refreshKey = 0) => {
         }
       } finally {
         if (!cancelled) setLoading(false);
+        console.log(
+          `[read:useProtocol] ${Math.round(performance.now() - t0)}ms`
+        );
       }
     };
 
@@ -242,9 +249,16 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
   const load = useCallback(async () => {
     if (!publicKey || !collection || !program) {
       setNfts([]);
+      // Clearing the flag matters: without it a run that starts with a
+      // wallet and then re-runs without one (adapter reconnecting, route
+      // change) leaves the spinner up forever, with no request in flight
+      // to ever turn it off.
+      setLoading(false);
       return;
     }
     setLoading(true);
+    const t0 = performance.now();
+    let tGpa = 0;
     try {
       const accounts = await connection.getProgramAccounts(MPL_CORE_PROGRAM_ID, {
         filters: [
@@ -254,6 +268,7 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
         ],
       });
 
+      tGpa = performance.now();
       const assets = accounts.map((a) => a.pubkey);
       const positions = await program.account.position.fetchMultiple(
         assets.map((a) => positionPda(a))
@@ -271,6 +286,12 @@ export const useOwnedNfts = (collection: PublicKey | null, refreshKey = 0) => {
       setNfts([]);
     } finally {
       setLoading(false);
+      const now = performance.now();
+      console.log(
+        `[read:useOwnedNfts] core-gpa ${Math.round((tGpa || now) - t0)}ms · ` +
+          `positions ${Math.round(tGpa ? now - tGpa : 0)}ms · ` +
+          `total ${Math.round(now - t0)}ms`
+      );
     }
   }, [connection, publicKey, collection, program]);
 
@@ -379,6 +400,7 @@ export const useStakeAccounts = (refreshKey = 0) => {
         return;
       }
       setLoading(true);
+      const t0 = performance.now();
       try {
         // Filter by the `owner` field, which sits right after the 8-byte
         // account discriminator.
@@ -396,6 +418,9 @@ export const useStakeAccounts = (refreshKey = 0) => {
         if (!cancelled) setStakes(new Map());
       } finally {
         if (!cancelled) setLoading(false);
+        console.log(
+          `[read:useStakeAccounts] ${Math.round(performance.now() - t0)}ms`
+        );
       }
     })();
     return () => {
