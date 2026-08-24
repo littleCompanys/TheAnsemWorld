@@ -194,7 +194,7 @@ export default function Mint() {
           tx.feePayer = publicKey;
           tx.recentBlockhash = blockhash;
           for (const ix of g.instructions) tx.add(ix);
-          tx.partialSign(...g.assets);
+          // Deliberately NOT signed here. See below.
           return tx;
         });
 
@@ -241,20 +241,42 @@ export default function Mint() {
           failedCount += failed.length;
         };
 
+        // The asset keypairs sign AFTER the wallet, not before.
+        //
+        // Both orders produce an identical, valid transaction - the
+        // signature slots are fixed by the message header, so when each
+        // one is filled makes no difference to the bytes that reach the
+        // chain. What differs is what the wallet is handed: signing the
+        // assets first means Phantom receives a transaction already
+        // carrying a signature from a key it has never seen, which is
+        // indistinguishable from a transaction someone else prepared.
+        // Signing them afterwards hands the wallet a clean transaction
+        // and adds the account-creation signatures to what it returns.
+        //
+        // Verified against mainnet: the wallet-first order survives the
+        // serialize/deserialize round trip a wallet performs, verifies
+        // complete, and simulates to err: null at the same 526 bytes.
+        const signAssets = (signed: Transaction[]) =>
+          signed.map((stx, i) => {
+            stx.partialSign(...chunk[i].assets);
+            return stx;
+          });
+
         if (signAllTransactions && txs.length > 1) {
-          await sendAndConfirmAll(await signAllTransactions(txs));
+          await sendAndConfirmAll(signAssets(await signAllTransactions(txs)));
         } else if (signTransaction) {
           const signed: Transaction[] = [];
           for (const tx of txs) signed.push(await signTransaction(tx));
-          await sendAndConfirmAll(signed);
+          await sendAndConfirmAll(signAssets(signed));
         } else {
           // Not provider.sendAndConfirm(): same WebSocket-race problem as
           // everywhere else in this file, but worse here - with no
           // blockhash passed, it falls back to confirmTransaction's
           // legacy signature-only strategy, which has no independent
           // expiry escape at all and just hangs on the broken subscription.
-          for (const tx of txs) {
-            const signed = await provider.wallet.signTransaction(tx);
+          for (let i = 0; i < txs.length; i++) {
+            const signed = await provider.wallet.signTransaction(txs[i]);
+            signed.partialSign(...chunk[i].assets);
             const sig = await connection.sendRawTransaction(signed.serialize(), {
               skipPreflight: false,
               preflightCommitment: "confirmed",
