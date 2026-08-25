@@ -155,13 +155,6 @@ export default function Home() {
                 </>
               )}
             </div>
-            <p className="round-hint">
-              Rounds are funded on-chain via <span className="mono">fund_rewards</span>
-              {ROUND_SECONDS > 0
-                ? ` · countdown assumes a ${formatInterval(ROUND_SECONDS)} keeper cadence`
-                : ""}
-              .
-            </p>
           </div>
 
           <div className="hero-visual">

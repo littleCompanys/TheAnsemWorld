@@ -15,6 +15,7 @@ pub mod stake;
 pub mod initialize_stake_vault;
 pub mod sync_owner;
 pub mod treasury;
+pub mod update_collection_metadata;
 pub mod upgrade_tier;
 
 pub use admin::*;
@@ -34,4 +35,5 @@ pub use stake::*;
 pub use initialize_stake_vault::*;
 pub use sync_owner::*;
 pub use treasury::*;
+pub use update_collection_metadata::*;
 pub use upgrade_tier::*;

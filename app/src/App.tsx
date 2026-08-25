@@ -50,7 +50,7 @@ export default function App() {
       <nav>
         <div className="nav-inner">
           <NavLink to="/" className="logo">
-            <span>THE ANSEM <span className="accent">WORLD</span></span>
+            <span>THE <span className="accent">ANSEM</span> WORLD</span>
           </NavLink>
 
           <div className={`nav-links${menuOpen ? " open" : ""}`}>
@@ -125,11 +125,10 @@ function Footer() {
       <div className="wrap footer-grid">
         <div>
           <div className="logo">
-            <span>THE ANSEM <span className="accent">WORLD</span></span>
+            <span>THE <span className="accent">ANSEM</span> WORLD</span>
           </div>
           <p className="foot-desc">
-            Earning $ANSEM every hour on Solana. Only ever shrinking. Not
-            affiliated with pump.fun or Ansem.io.
+            Earning $ANSEM every hour on Solana. Only ever shrinking.
           </p>
         </div>
         <div className="foot-links">

@@ -154,6 +154,18 @@ pub mod ansem_world_v4 {
         admin::set_base_uri(ctx, base_uri)
     }
 
+    /// Updates the Core collection's name and/or URI via a signed CPI.
+    /// The config PDA is the collection's update authority after
+    /// `claim_collection_authority` has run, so this is the only way
+    /// to fix a wrong/placeholder collection URI after launch.
+    pub fn update_collection_metadata(
+        ctx: Context<UpdateCollectionMetadata>,
+        new_name: Option<String>,
+        new_uri: Option<String>,
+    ) -> Result<()> {
+        update_collection_metadata::handler(ctx, new_name, new_uri)
+    }
+
     /// Clears a position whose NFT was burned outside fuse, returning
     /// its stranded weight to the pool. Permissionless.
     pub fn reap_burned(ctx: Context<ReapBurned>) -> Result<()> {

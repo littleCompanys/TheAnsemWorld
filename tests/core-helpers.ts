@@ -107,8 +107,8 @@ export const createCollection = async (
 
   await createCollectionWithPlugins(umi, {
     collection,
-    name: "Ansem World",
-    uri: "https://example.com/collection.json",
+    name: "The Ansem World",
+    uri: "https://theansemworld.xyz/collection.json",
     plugins: [
       {
         type: "Royalties",

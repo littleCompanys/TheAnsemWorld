@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
 import { useProtocol } from "../lib/useAnsem";
 import { fmtMultiplier, shortKey } from "../lib/program";
 
@@ -587,15 +586,6 @@ export default function Docs() {
               No. Not affiliated with pump.fun or Ansem.io.
             </p>
           </section>
-
-          <div className="docs-foot">
-            <NavLink to="/mint" className="btn btn-primary">
-              Mint a piece
-            </NavLink>
-            <NavLink to="/activate" className="btn btn-outline">
-              Wake one up
-            </NavLink>
-          </div>
         </article>
       </div>
     </main>

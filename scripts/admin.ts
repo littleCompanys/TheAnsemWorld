@@ -29,7 +29,8 @@ type Action =
   | "supply"
   | "activation"
   | "fund"
-  | "authority";
+  | "authority"
+  | "collection";
 
 const action = (process.env.ADMIN_ACTION ?? "status") as Action;
 const n = (v: number) => v.toLocaleString("en-US");
@@ -301,6 +302,38 @@ describe(`admin:${action}`, () => {
           .accounts({ authority: me })
           .rpc();
         await after(`authority is now ${next.toBase58()}`);
+        return;
+      }
+
+      case "collection": {
+        // Update the Core collection's name and/or URI.
+        //
+        // Usage:
+        //   COL_NAME="The Ansem World" COL_URI="https://theansemworld.xyz/collection.json" \
+        //     npm run admin:collection:mainnet
+        //
+        // Either var can be omitted to leave the field unchanged.
+        const newName: string | null = process.env.COL_NAME ?? null;
+        const newUri: string | null = process.env.COL_URI ?? null;
+
+        if (!newName && !newUri) {
+          throw new Error(
+            "set COL_NAME and/or COL_URI to the values you want to write"
+          );
+        }
+
+        console.log("  collection   ", cfg.coreCollection.toBase58());
+        if (newName) console.log("  new name     ", newName);
+        if (newUri)  console.log("  new uri      ", newUri);
+
+        await program.methods
+          .updateCollectionMetadata(newName ?? null, newUri ?? null)
+          .accounts({
+            authority: me,
+            collection: cfg.coreCollection,
+          })
+          .rpc();
+        await after("collection metadata updated");
         return;
       }
     }
