@@ -104,11 +104,11 @@ export type ProtocolStats = {
  * a page that starts needing them should fail visibly instead of
  * quietly rendering an empty collection.
  */
-export const useProtocol = (refreshKey = 0, withPositions = false) => {
+export const useProtocol = (refreshKey = 0, withPositions = false, skip = false) => {
   const program = useProgram();
   const { connection } = useConnection();
   const [stats, setStats] = useState<ProtocolStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!skip);
   // Set only when the RPC call itself failed (rate limit, network hiccup,
   // etc.) - distinct from a clean read that confirms the protocol genuinely
   // has no config yet. The two used to collapse into the same `stats: null`
@@ -122,7 +122,7 @@ export const useProtocol = (refreshKey = 0, withPositions = false) => {
     let retried = false;
 
     const load = async (): Promise<void> => {
-      if (!program) return;
+      if (skip || !program) return;
       setLoading(true);
       // Timed for the same reason rpcSafe times writes: a slow page is
       // only fixable once you know which phase is slow, and none of this
@@ -240,7 +240,7 @@ export const useProtocol = (refreshKey = 0, withPositions = false) => {
     return () => {
       cancelled = true;
     };
-  }, [program, connection, refreshKey, withPositions]);
+  }, [program, connection, refreshKey, withPositions, skip]);
 
   return { stats, loading, fetchError };
 };

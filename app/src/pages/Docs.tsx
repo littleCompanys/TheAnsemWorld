@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useProtocol } from "../lib/useAnsem";
-import { fmtMultiplier, shortKey } from "../lib/program";
+import { fmtMultiplier, shortKey, PROGRAM_ID } from "../lib/program";
+import { PRE_LAUNCH } from "../App";
 
 /**
  * Everything the protocol does, in plain language.
@@ -45,8 +46,11 @@ const EXPLORER = (addr: string) =>
 const n = (v: number) => v.toLocaleString("en-US");
 
 export default function Docs() {
-  const { stats } = useProtocol();
-  const cfg = stats?.config ?? null;
+  // While pre-launch, this page's Program ID row (below) can't point at a
+  // live protocol anyway, so skip the RPC calls entirely rather than risk
+  // showing a rehearsal run's leftover config/vault numbers.
+  const { stats } = useProtocol(0, false, PRE_LAUNCH);
+  const cfg = PRE_LAUNCH ? null : stats?.config ?? null;
   const [active, setActive] = useState(SECTIONS[0].id);
 
   // Highlight whichever section is currently under the top of the screen.
@@ -442,11 +446,11 @@ export default function Docs() {
                     <td>
                       <a
                         className="mono"
-                        href={EXPLORER("9Ku7jCnxjyJuUiyXscjKk5ueMPpWQnUTwpLKZfzErq2E")}
+                        href={EXPLORER(PROGRAM_ID.toBase58())}
                         target="_blank"
                         rel="noreferrer"
                       >
-                        9Ku7jCnxjyJuUiyXscjKk5ueMPpWQnUTwpLKZfzErq2E
+                        {PROGRAM_ID.toBase58()}
                       </a>
                     </td>
                   </tr>
