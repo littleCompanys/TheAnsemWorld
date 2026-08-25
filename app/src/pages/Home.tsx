@@ -8,8 +8,6 @@ import { useToast } from "../components/Toast";
 
 /** Keeper cadence shown in the hero (seconds). Override with VITE_ROUND_SECONDS. */
 const ROUND_SECONDS = Number(import.meta.env.VITE_ROUND_SECONDS ?? 3600);
-const LAST_FUND_KEY = "ansem:lastFundAllocated";
-const LAST_FUND_AT_KEY = "ansem:lastFundAt";
 
 // This preview grid is a visual sample, not the official per-token art
 // (that stays on IPFS, referenced by each NFT's on-chain metadata URI).
@@ -24,7 +22,7 @@ export default function Home() {
   const { stats, loading } = useProtocol(0, true);
   const toast = useToast();
   const cfg = stats?.config ?? null;
-  const roundLeft = useRoundCountdown(stats?.totalAllocated ?? null);
+  const roundLeft = useRoundCountdown();
 
   // These four come from the position scan, which this page asks for
   // above. They read null anywhere the scan was skipped, so the reads
@@ -496,7 +494,15 @@ export default function Home() {
 }
 
 /** Countdown to the next keeper-style funding window. */
-function useRoundCountdown(totalAllocated: number | null) {
+/**
+ * Same number for every visitor: a fixed schedule anchored to the Unix
+ * epoch (UTC), not to when each browser happened to load the page. This
+ * is cosmetic, not a real keeper clock - nothing here funds a round on
+ * this cadence yet, fund_rewards is still triggered by hand
+ * (admin:fund:mainnet). Wire this to the real schedule once a keeper
+ * exists; until then it's honest only in that it agrees across tabs.
+ */
+function useRoundCountdown() {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -504,22 +510,10 @@ function useRoundCountdown(totalAllocated: number | null) {
     return () => window.clearInterval(id);
   }, []);
 
-  // When a new fund lands (totalAllocated rises), reset the window.
-  useEffect(() => {
-    if (totalAllocated == null) return;
-    const prev = Number(localStorage.getItem(LAST_FUND_KEY) ?? "NaN");
-    if (!Number.isFinite(prev) || totalAllocated > prev) {
-      localStorage.setItem(LAST_FUND_KEY, String(totalAllocated));
-      localStorage.setItem(LAST_FUND_AT_KEY, String(Date.now()));
-    }
-  }, [totalAllocated]);
-
   return useMemo(() => {
     if (!ROUND_SECONDS || ROUND_SECONDS <= 0) return 0;
-    const raw = localStorage.getItem(LAST_FUND_AT_KEY);
-    const lastAt = raw ? Number(raw) : Date.now();
-    const elapsed = Math.floor((now - lastAt) / 1000);
-    const left = ROUND_SECONDS - (elapsed % ROUND_SECONDS);
+    const nowSec = Math.floor(now / 1000);
+    const left = ROUND_SECONDS - (nowSec % ROUND_SECONDS);
     return left <= 0 ? ROUND_SECONDS : left;
   }, [now]);
 }
