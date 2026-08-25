@@ -14,8 +14,20 @@ import Explorer from "./pages/Explorer";
 import Mint from "./pages/Mint";
 import Stake from "./pages/Stake";
 import Docs from "./pages/Docs";
+import ComingSoon from "./pages/ComingSoon";
 
-const LINKS = [
+/**
+ * Kill switch for the whole live app. While `VITE_PRE_LAUNCH=true`, the
+ * program address baked into this build is either dead (rehearsal,
+ * closed) or not deployed yet - so nothing here reads chain state at
+ * all: no protocol query, no balances, every route including "/" renders
+ * the `ComingSoon` placeholder. Flip the env to anything else (or delete
+ * it) and redeploy once `launch:setup:mainnet` has run against the real
+ * program to bring the whole app back in one shot.
+ */
+export const PRE_LAUNCH = import.meta.env.VITE_PRE_LAUNCH === "true";
+
+const ALL_LINKS = [
   { to: "/", label: "Home", end: true },
   { to: "/mint", label: "Mint" },
   { to: "/activate", label: "Activate" },
@@ -26,9 +38,51 @@ const LINKS = [
   { to: "/docs", label: "Docs" },
 ];
 
+const LINKS = PRE_LAUNCH
+  ? ALL_LINKS.filter((l) => l.to === "/" || l.to === "/docs")
+  : ALL_LINKS;
+
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { connected } = useWallet();
+  return PRE_LAUNCH ? (
+    <PreLaunchApp menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
+  ) : (
+    <LiveApp connected={connected} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
+  );
+}
+
+/** Every route renders the placeholder. No chain reads, no wallet balances. */
+function PreLaunchApp({
+  menuOpen,
+  setMenuOpen,
+}: {
+  menuOpen: boolean;
+  setMenuOpen: (v: boolean | ((v: boolean) => boolean)) => void;
+}) {
+  return (
+    <>
+      <div className="grid-bg" />
+      <NavBar menuOpen={menuOpen} setMenuOpen={setMenuOpen} balances={null} />
+      <Routes>
+        <Route path="/docs" element={<Docs />} />
+        <Route path="*" element={<ComingSoon />} />
+      </Routes>
+      <Footer />
+      <PriceBar />
+    </>
+  );
+}
+
+function LiveApp({
+  connected,
+  menuOpen,
+  setMenuOpen,
+}: {
+  connected: boolean;
+  menuOpen: boolean;
+  setMenuOpen: (v: boolean | ((v: boolean) => boolean)) => void;
+}) {
   // The header outlives every page, so it needs the app-wide signal
   // rather than any page's own counter - otherwise burning $ANSEMW on
   // the Activate page updates that page and leaves this number stale.
@@ -43,64 +97,16 @@ export default function App() {
     chainRefresh
   );
 
+  const balances =
+    connected && stats?.config != null
+      ? { ansem: ansemBalance, ansemw: ansemwBalance }
+      : null;
+
   return (
     <>
       <div className="grid-bg" />
 
-      <nav>
-        <div className="nav-inner">
-          <NavLink to="/" className="logo">
-            <span>THE <span className="accent">ANSEM</span> WORLD</span>
-          </NavLink>
-
-          <div className={`nav-links${menuOpen ? " open" : ""}`}>
-            {LINKS.map((l) => (
-              <NavLink
-                key={l.to}
-                to={l.to}
-                end={l.end}
-                onClick={() => setMenuOpen(false)}
-                className={({ isActive }) => (isActive ? "active" : "")}
-              >
-                {l.label}
-              </NavLink>
-            ))}
-          </div>
-
-          <div className="nav-right">
-            {connected && stats?.config != null && (
-              <>
-                <div className="wallet-balance mono" title="Claimed $ANSEM in this wallet">
-                  <img
-                    src="/ansem-icon.png"
-                    alt="$ANSEM"
-                    style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }}
-                  />
-                  <b>{fmtToken(ansemBalance)}</b>
-                </div>
-                <div className="wallet-balance mono" title="$ANSEMW in this wallet">
-                  <img
-                    src="/ansemw-icon.png"
-                    alt="$ANSEMW"
-                    style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }}
-                  />
-                  <b>{fmtToken(ansemwBalance)}</b>
-                </div>
-              </>
-            )}
-            <WalletMultiButton />
-            <button
-              className="menu-toggle"
-              aria-label="Menu"
-              onClick={() => setMenuOpen((v) => !v)}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </nav>
+      <NavBar menuOpen={menuOpen} setMenuOpen={setMenuOpen} balances={balances} />
 
       <Routes>
         <Route path="/" element={<Home />} />
@@ -119,6 +125,73 @@ export default function App() {
   );
 }
 
+function NavBar({
+  menuOpen,
+  setMenuOpen,
+  balances,
+}: {
+  menuOpen: boolean;
+  setMenuOpen: (v: boolean | ((v: boolean) => boolean)) => void;
+  balances: { ansem: number; ansemw: number } | null;
+}) {
+  return (
+    <nav>
+      <div className="nav-inner">
+        <NavLink to="/" className="logo">
+          <span>THE <span className="accent">ANSEM</span> WORLD</span>
+        </NavLink>
+
+        <div className={`nav-links${menuOpen ? " open" : ""}`}>
+          {LINKS.map((l) => (
+            <NavLink
+              key={l.to}
+              to={l.to}
+              end={l.end}
+              onClick={() => setMenuOpen(false)}
+              className={({ isActive }) => (isActive ? "active" : "")}
+            >
+              {l.label}
+            </NavLink>
+          ))}
+        </div>
+
+        <div className="nav-right">
+          {balances && (
+            <>
+              <div className="wallet-balance mono" title="Claimed $ANSEM in this wallet">
+                <img
+                  src="/ansem-icon.png"
+                  alt="$ANSEM"
+                  style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }}
+                />
+                <b>{fmtToken(balances.ansem)}</b>
+              </div>
+              <div className="wallet-balance mono" title="$ANSEMW in this wallet">
+                <img
+                  src="/ansemw-icon.png"
+                  alt="$ANSEMW"
+                  style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }}
+                />
+                <b>{fmtToken(balances.ansemw)}</b>
+              </div>
+            </>
+          )}
+          <WalletMultiButton />
+          <button
+            className="menu-toggle"
+            aria-label="Menu"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
 function Footer() {
   return (
     <footer>
@@ -133,12 +206,12 @@ function Footer() {
         </div>
         <div className="foot-links">
           <div className="foot-col">
-            <NavLink to="/mint">Mint</NavLink>
-            <NavLink to="/activate">Activate</NavLink>
-            <NavLink to="/claim">Claim</NavLink>
-            <NavLink to="/stake">Stake</NavLink>
-            <NavLink to="/forge">Forge</NavLink>
-            <NavLink to="/explorer">Explorer</NavLink>
+            {!PRE_LAUNCH && <NavLink to="/mint">Mint</NavLink>}
+            {!PRE_LAUNCH && <NavLink to="/activate">Activate</NavLink>}
+            {!PRE_LAUNCH && <NavLink to="/claim">Claim</NavLink>}
+            {!PRE_LAUNCH && <NavLink to="/stake">Stake</NavLink>}
+            {!PRE_LAUNCH && <NavLink to="/forge">Forge</NavLink>}
+            {!PRE_LAUNCH && <NavLink to="/explorer">Explorer</NavLink>}
             <NavLink to="/docs">Docs</NavLink>
           </div>
           <div className="foot-col">
