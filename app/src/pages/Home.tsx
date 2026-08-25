@@ -5,7 +5,6 @@ import { useProtocol } from "../lib/useAnsem";
 import { fmtToken, fmtMultiplier, shortKey, toUi, PROGRAM_ID } from "../lib/program";
 import { usePrices, usdValue } from "../lib/usePrices";
 import { useToast } from "../components/Toast";
-import { PRE_LAUNCH } from "../App";
 
 /** Keeper cadence shown in the hero (seconds). Override with VITE_ROUND_SECONDS. */
 const ROUND_SECONDS = Number(import.meta.env.VITE_ROUND_SECONDS ?? 3600);
@@ -79,58 +78,37 @@ export default function Home() {
             </p>
 
             <div className="hero-actions">
-              {PRE_LAUNCH ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled
-                    style={{ cursor: "not-allowed", opacity: 0.7 }}
-                    title="Launching soon"
-                  >
-                    Launching soon
-                  </button>
-                  <Link to="/docs" className="btn btn-outline">
-                    Read the docs
-                  </Link>
-                </>
-              ) : (
-                <>
-                  <Link to="/mint" className="btn btn-primary">
-                    Mint a piece
-                  </Link>
-                  <Link to="/activate" className="btn btn-outline">
-                    Activate
-                  </Link>
-                </>
-              )}
+              <Link to="/mint" className="btn btn-primary">
+                Mint a piece
+              </Link>
+              <Link to="/activate" className="btn btn-outline">
+                Activate
+              </Link>
             </div>
 
-            {!PRE_LAUNCH && (
-              <div className="hero-chips">
-                <div className="stat-chip">
-                  next round in{" "}
-                  <b className="mono">{formatCountdown(roundLeft)}</b>
-                </div>
-                <div className="stat-chip">
-                  supply <b className="mono">{supply.toLocaleString("en-US")}</b>
-                </div>
-                <div className="stat-chip">
-                  $ANSEMW burned{" "}
-                  <b className="mono">
-                    {stats
-                      ? (stats.totalAnsemwBurned ?? 0).toLocaleString("en-US")
-                      : "—"}
-                  </b>
-                </div>
-                <div className="stat-chip">
-                  paid to holders{" "}
-                  <b className="mono">
-                    {stats ? fmtToken(stats.totalClaimed) : "—"}
-                  </b>
-                </div>
+            <div className="hero-chips">
+              <div className="stat-chip">
+                next round in{" "}
+                <b className="mono">{formatCountdown(roundLeft)}</b>
               </div>
-            )}
+              <div className="stat-chip">
+                supply <b className="mono">{supply.toLocaleString("en-US")}</b>
+              </div>
+              <div className="stat-chip">
+                $ANSEMW burned{" "}
+                <b className="mono">
+                  {stats
+                    ? (stats.totalAnsemwBurned ?? 0).toLocaleString("en-US")
+                    : "—"}
+                </b>
+              </div>
+              <div className="stat-chip">
+                paid to holders{" "}
+                <b className="mono">
+                  {stats ? fmtToken(stats.totalClaimed) : "—"}
+                </b>
+              </div>
+            </div>
 
             <div className="contract-row mono">
               {ansemMint ? (

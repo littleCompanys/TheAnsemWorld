@@ -14,19 +14,8 @@ import Explorer from "./pages/Explorer";
 import Mint from "./pages/Mint";
 import Stake from "./pages/Stake";
 import Docs from "./pages/Docs";
-import ComingSoon from "./pages/ComingSoon";
 
-/**
- * Toggle for the pre-launch state. While `VITE_PRE_LAUNCH=true` in the
- * frontend env, every action page (mint/activate/claim/stake/forge/
- * explorer) renders the `ComingSoon` placeholder instead of the real UI,
- * their links vanish from the nav, and the header hides wallet balances
- * that only make sense once the protocol is live. Flip the env to any
- * other value (or delete it) and redeploy to unlock the app in one shot.
- */
-export const PRE_LAUNCH = import.meta.env.VITE_PRE_LAUNCH === "true";
-
-const ALL_LINKS = [
+const LINKS = [
   { to: "/", label: "Home", end: true },
   { to: "/mint", label: "Mint" },
   { to: "/activate", label: "Activate" },
@@ -36,10 +25,6 @@ const ALL_LINKS = [
   { to: "/explorer", label: "Explorer" },
   { to: "/docs", label: "Docs" },
 ];
-
-const LINKS = PRE_LAUNCH
-  ? ALL_LINKS.filter((l) => l.to === "/" || l.to === "/docs")
-  : ALL_LINKS;
 
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -83,7 +68,7 @@ export default function App() {
           </div>
 
           <div className="nav-right">
-            {connected && stats?.config && (
+            {connected && stats?.config != null && (
               <>
                 <div className="wallet-balance mono" title="Claimed $ANSEM in this wallet">
                   <img
@@ -120,27 +105,12 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/docs" element={<Docs />} />
-        {PRE_LAUNCH ? (
-          // Any bookmarked action URL lands on the placeholder rather than
-          // rendering half-broken pages against a config that doesn't exist.
-          <>
-            <Route path="/mint" element={<ComingSoon />} />
-            <Route path="/activate" element={<ComingSoon />} />
-            <Route path="/claim" element={<ComingSoon />} />
-            <Route path="/stake" element={<ComingSoon />} />
-            <Route path="/forge" element={<ComingSoon />} />
-            <Route path="/explorer" element={<ComingSoon />} />
-          </>
-        ) : (
-          <>
-            <Route path="/mint" element={<Mint />} />
-            <Route path="/activate" element={<Activate />} />
-            <Route path="/claim" element={<MyStack />} />
-            <Route path="/stake" element={<Stake />} />
-            <Route path="/forge" element={<Forge />} />
-            <Route path="/explorer" element={<Explorer />} />
-          </>
-        )}
+        <Route path="/mint" element={<Mint />} />
+        <Route path="/activate" element={<Activate />} />
+        <Route path="/claim" element={<MyStack />} />
+        <Route path="/stake" element={<Stake />} />
+        <Route path="/forge" element={<Forge />} />
+        <Route path="/explorer" element={<Explorer />} />
       </Routes>
 
       <Footer />
@@ -163,12 +133,12 @@ function Footer() {
         </div>
         <div className="foot-links">
           <div className="foot-col">
-            {!PRE_LAUNCH && <NavLink to="/mint">Mint</NavLink>}
-            {!PRE_LAUNCH && <NavLink to="/activate">Activate</NavLink>}
-            {!PRE_LAUNCH && <NavLink to="/claim">Claim</NavLink>}
-            {!PRE_LAUNCH && <NavLink to="/stake">Stake</NavLink>}
-            {!PRE_LAUNCH && <NavLink to="/forge">Forge</NavLink>}
-            {!PRE_LAUNCH && <NavLink to="/explorer">Explorer</NavLink>}
+            <NavLink to="/mint">Mint</NavLink>
+            <NavLink to="/activate">Activate</NavLink>
+            <NavLink to="/claim">Claim</NavLink>
+            <NavLink to="/stake">Stake</NavLink>
+            <NavLink to="/forge">Forge</NavLink>
+            <NavLink to="/explorer">Explorer</NavLink>
             <NavLink to="/docs">Docs</NavLink>
           </div>
           <div className="foot-col">
