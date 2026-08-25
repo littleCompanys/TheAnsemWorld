@@ -1,5 +1,5 @@
 {
-  "address": "8877byAeJpCUWQhBWXQ5YrBPSrBa9761koygiFP1ijtP",
+  "address": "8gg4uxSoMLMx4nVquLQFRf7s9mr6L9AVT7bP8hnN7hZo",
   "metadata": {
     "name": "ansem_world_v4",
     "version": "0.1.0",
@@ -2160,6 +2160,80 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "update_collection_metadata",
+      "docs": [
+        "Updates the Core collection's name and/or URI via a signed CPI.",
+        "The config PDA is the collection's update authority after",
+        "`claim_collection_authority` has run, so this is the only way",
+        "to fix a wrong/placeholder collection URI after launch."
+      ],
+      "discriminator": [
+        204,
+        209,
+        28,
+        193,
+        211,
+        42,
+        156,
+        184
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Must be the protocol authority."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "collection",
+          "writable": true
+        },
+        {
+          "name": "mpl_core_program",
+          "address": "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "new_name",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "new_uri",
+          "type": {
+            "option": "string"
+          }
+        }
+      ]
     },
     {
       "name": "upgrade_tier",

@@ -8,7 +8,7 @@ pub mod state;
 
 use instructions::*;
 
-declare_id!("8877byAeJpCUWQhBWXQ5YrBPSrBa9761koygiFP1ijtP");
+declare_id!("8gg4uxSoMLMx4nVquLQFRf7s9mr6L9AVT7bP8hnN7hZo");
 
 #[program]
 pub mod ansem_world_v4 {

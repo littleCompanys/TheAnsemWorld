@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/ansem_world_v4.json`.
  */
 export type AnsemWorldV4 = {
-  "address": "8877byAeJpCUWQhBWXQ5YrBPSrBa9761koygiFP1ijtP",
+  "address": "8gg4uxSoMLMx4nVquLQFRf7s9mr6L9AVT7bP8hnN7hZo",
   "metadata": {
     "name": "ansemWorldV4",
     "version": "0.1.0",
@@ -2166,6 +2166,80 @@ export type AnsemWorldV4 = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "updateCollectionMetadata",
+      "docs": [
+        "Updates the Core collection's name and/or URI via a signed CPI.",
+        "The config PDA is the collection's update authority after",
+        "`claim_collection_authority` has run, so this is the only way",
+        "to fix a wrong/placeholder collection URI after launch."
+      ],
+      "discriminator": [
+        204,
+        209,
+        28,
+        193,
+        211,
+        42,
+        156,
+        184
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Must be the protocol authority."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "collection",
+          "writable": true
+        },
+        {
+          "name": "mplCoreProgram",
+          "address": "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "newName",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "newUri",
+          "type": {
+            "option": "string"
+          }
+        }
+      ]
     },
     {
       "name": "upgradeTier",
